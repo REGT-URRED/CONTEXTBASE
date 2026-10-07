@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tgz
+.DS_Store
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Temporary artifacts & repomix packs
+contextbase-pack.txt
+repomix-output.*
+.cache/
+__pycache__/
+.venv/
+*.pyc
