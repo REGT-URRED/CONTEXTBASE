@@ -6,6 +6,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 
 ## Cambios Realizados
 
+- [2026-10-07] Limpieza y estandarización visual de README.md: eliminación total de emojis y sincronización con GitHub.
 - [2026-10-07] Incorporación de auto-creación y garantía de resiliencia (ensureContextBase) ante ausencia o modificación de contextbase/ en cualquier proyecto.
 - [2026-10-07] Reinicialización de repositorio Git limpio para REGT-URRED y publicación en GitHub.
 - [2026-10-07] Transformación integral del repositorio: eliminación del código legado de OpenWiki y creación de ContextBase como herramienta propia minimalista Zero-Dependencies en Node.js ESM.

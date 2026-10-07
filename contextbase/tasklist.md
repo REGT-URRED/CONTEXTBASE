@@ -19,6 +19,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Creación e instalación global de la Skill para agentes en `~/.gemini/config/skills/contextbase`
 - [x] Enlace global del sistema mediante `npm link` (`contextbase`, `cb`, `openwiki`)
 - [x] Elaboración de documentación integral en español (`README.md`)
+- [x] Eliminación de emojis en `README.md` para presentación sobria
 - [x] Reinicialización limpia de Git bajo autoría exclusiva de REGT-URRED
 - [x] Publicación inicial en GitHub (https://github.com/REGT-URRED/CONTEXTBASE.git)
 

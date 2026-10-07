@@ -5,7 +5,7 @@
 
 ---
 
-## 🌟 ¿Qué es ContextBase?
+## ¿Qué es ContextBase?
 
 Cuando trabajas con agentes de IA de última generación (**Antigravity, Claude Code, Cursor, Windsurf, OpenCode, Kilo, Kimi Code, Codex, Roo Code**, etc.), uno de los mayores problemas es la **pérdida de contexto, continuidad técnica y memoria histórica** entre sesiones de trabajo.
 
@@ -18,7 +18,7 @@ Cuando trabajas con agentes de IA de última generación (**Antigravity, Claude 
 
 ---
 
-## 🚀 Instalación y Puesta en Marcha
+## Instalación y Puesta en Marcha
 
 ### 1. Instalación Global (Recomendada)
 Desde el directorio del proyecto:
@@ -44,7 +44,7 @@ El agente ejecutará `contextbase init` y quedará automáticamente configurado 
 
 ---
 
-## 📂 Estructura del Sistema `contextbase/`
+## Estructura del Sistema contextbase/
 
 Cuando ejecutas `contextbase init`, se crea la carpeta `contextbase/` con tres documentos metódicos y en **español**:
 
@@ -56,7 +56,7 @@ Cuando ejecutas `contextbase init`, se crea la carpeta `contextbase/` con tres d
 
 ---
 
-## ⚡ Regla Crítica de Actualización (Obligatoria para Agentes)
+## Regla Crítica de Actualización (Obligatoria para Agentes)
 
 ContextBase inyecta automáticamente esta directiva en `AGENTS.md`, `CLAUDE.md`, `.cursorrules` y `.windsurfrules`:
 
@@ -76,7 +76,7 @@ Toda futura corrección, mejora, alteración o nueva implementación en el códi
 
 ---
 
-## 🛠️ Comandos CLI Disponibles
+## Comandos CLI Disponibles
 
 ### `contextbase init`
 Inicializa el sistema en el proyecto actual.
@@ -126,7 +126,7 @@ Copia e instala la Skill de ContextBase en el directorio global de agentes (`~/.
 
 ---
 
-## 🧩 Compatibilidad Universal de Agentes
+## Compatibilidad Universal de Agentes
 
 ContextBase está diseñado para operar de forma nativa con cualquier agente o editor:
 - **Google Antigravity / Gemini CLI** (mediante Skill global y `AGENTS.md`)
@@ -138,7 +138,7 @@ ContextBase está diseñado para operar de forma nativa con cualquier agente o e
 
 ---
 
-## 📦 Arquitectura Técnica Minimalista
+## Arquitectura Técnica Minimalista
 
 - **0 dependencias externas (`dependencies: {}`)**: Instalación instantánea en menos de 1 segundo.
 - **Node.js ESM nativo**: Compatible con Node 18, 20, 22+.
@@ -147,5 +147,5 @@ ContextBase está diseñado para operar de forma nativa con cualquier agente o e
 
 ---
 
-## 📄 Licencia
+## Licencia
 MIT
