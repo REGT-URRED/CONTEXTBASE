@@ -5,9 +5,9 @@
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "contextbase": "./bin/contextbase.js",
-    "cb": "./bin/contextbase.js",
-    "openwiki": "./bin/contextbase.js"
+    "contextbase": "bin/contextbase.js",
+    "cb": "bin/contextbase.js",
+    "openwiki": "bin/contextbase.js"
   },
   "files": [
     "bin",
