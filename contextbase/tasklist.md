@@ -31,6 +31,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Redacción de secretos en `pack` y exclusión de archivos `.env`
 - [x] Verificadores Rust (`cargo audit`) y Go (`govulncheck`) en el mantenimiento preventivo
 - [x] Suite de 20 pruebas con `node:test`
+- [x] README orientado a npm (instalacion desde registro, quickstart, comandos, MCP, seguridad)
 
 ---
 

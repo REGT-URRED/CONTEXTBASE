@@ -1,7 +1,7 @@
 # Instrucciones para Agentes de Código
 
 <!-- CONTEXTBASE:START -->
-<!-- CONTEXTBASE:v1.2.0 -->
+<!-- CONTEXTBASE:v1.2.1 -->
 ## Memoria Persistente y Bitácora del Proyecto (contextbase)
 Este proyecto utiliza un sistema de memoria técnica persistente en la carpeta `contextbase/`.
 

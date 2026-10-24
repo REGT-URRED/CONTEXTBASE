@@ -1,6 +1,6 @@
 {
   "name": "contextbase",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Sistema minimalista y universal de memoria persistente para proyectos y agentes de código (Antigravity, Claude Code, Cursor, OpenCode, etc.)",
   "type": "module",
   "main": "src/index.js",

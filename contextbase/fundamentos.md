@@ -28,7 +28,7 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 
 ## 3. Arquitectura y Contexto Técnico General
 - **Nombre:** `contextbase`
-- **Versión:** `1.2.0`
+- **Versión:** `1.2.1`
 - **Ecosistema:** Node.js (ESM puro, >= 18.0.0)
 - **Dependencias Externas:** 0 (Zero-Dependencies)
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
@@ -90,7 +90,7 @@ contextbase/
 <!-- CONTEXTBASE:SYNC:START -->
 ## Contexto Técnico Sincronizado (auto)
 > Generado por `contextbase sync`. No editar dentro de este bloque: se reemplaza completo.
-- **Versión:** 1.2.0
+- **Versión:** 1.2.1
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
 - **Lenguajes dominantes:** JavaScript (23), Markdown (9), JSON (2)
