@@ -11,6 +11,7 @@ Toda futura corrección, mejora, alteración o nueva implementación en el códi
 2. **\`contextbase/tasklist.md\`**: Marcar con \`[x]\` las tareas completadas y registrar con \`[ ]\` cualquier nueva tarea o requerimiento pendiente.
 3. **\`contextbase/fundamentos.md\`**: Actualizar si hubo modificaciones en arquitectura, dependencias, scripts o reglas operativas.
 4. **Idioma**: Toda salida, bitácora y documentación debe mantenerse estrictamente en **español**.
+5. **Mantenimiento Preventivo Automático**: Al iniciar un proyecto o sesión y como verificación final al cerrar cada cambio, revisar \`contextbase/componentes.md\` (inventario, versiones instaladas y brechas de seguridad); regenerarlo con \`contextbase audit\`. Delegar en la CLI: no saturar las instrucciones con reglas adicionales.
 <!-- CONTEXTBASE:END -->`;
 
 /**

@@ -22,12 +22,17 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Eliminación de emojis en `README.md` para presentación sobria
 - [x] Reinicialización limpia de Git bajo autoría exclusiva de REGT-URRED
 - [x] Publicación inicial en GitHub (https://github.com/REGT-URRED/CONTEXTBASE.git)
+- [x] Mantenimiento preventivo automático: inventario de componentes y verificación de brechas (`src/maintenance.js`, `contextbase audit`, `contextbase/componentes.md`)
+- [x] Regla de mantenimiento preventivo integrada en bloques de agente, generador y Skill global
+- [x] Corrección del subcomando `contextbase task done` (variables sin declarar)
+- [x] Aviso automático en `status` cuando el informe de componentes falta o supera 7 días
 
 ---
 
 ## Tareas Pendientes / En Progreso
 
 - [ ] Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere)
+- [ ] Ampliar verificadores de seguridad opcionales para Rust (`cargo audit`) y Go (`govulncheck`) cuando estén instalados
 - [ ] Incorporar pruebas unitarias automáticas con el runner nativo `node:test`
 - [ ] Publicar en registro npm público si el usuario decide distribuirlo públicamente
 

@@ -35,6 +35,8 @@ Cuando el usuario indique "instala esto", "inicializa memoria" o se trabaje en u
 > 2. `contextbase/tasklist.md`: Marcar con `[x]` las tareas completadas y registrar con `[ ]` las pendientes.
 > 3. `contextbase/fundamentos.md`: Actualizar si se modificó la arquitectura o dependencias.
 > 4. Idioma: Toda la documentación debe mantenerse estrictamente en **español**.
+>
+> 5. **Mantenimiento preventivo:** revisar y regenerar `contextbase/componentes.md` con `contextbase audit` al iniciar un proyecto o sesión y como verificación final al cerrar cada cambio (componentes, versiones instaladas y brechas de seguridad). Delegar en la CLI, sin saturar las instrucciones del agente.
 
 ---
 
@@ -45,3 +47,4 @@ Cuando el usuario indique "instala esto", "inicializa memoria" o se trabaje en u
 - `contextbase log "<mensaje>"`: Registrar un cambio en `changelog.md`.
 - `contextbase pack`: Empaquetar el repositorio estilo Repomix para análisis en contexto.
 - `contextbase dump`: Volcar todo el contenido de contextbase para alimentar el prompt.
+- `contextbase audit`: Regenerar el inventario de componentes, su frescura de versiones y la verificación de brechas de seguridad conocidas en `contextbase/componentes.md`.

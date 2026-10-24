@@ -21,16 +21,19 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
    - Manejo seguro de errores y rutas del sistema de archivos multiplataforma.
 4. **Idioma de Documentación:**
    - Toda la documentación, bitácoras y salidas de terminal deben mantenerse estrictamente en **español**.
+5. **Mantenimiento Preventivo Automático:**
+   - Al iniciar un proyecto o sesión y como verificación final al cerrar cada cambio, revisar `contextbase/componentes.md`; regenerarlo con `contextbase audit` (componentes, versiones instaladas y brechas de seguridad). Delegar en la CLI sin saturar instrucciones.
 
 ---
 
 ## 3. Arquitectura y Contexto Técnico General
 - **Nombre:** `contextbase`
-- **Versión:** `1.0.0`
+- **Versión:** `1.1.0`
 - **Ecosistema:** Node.js (ESM puro, >= 18.0.0)
 - **Dependencias Externas:** 0 (Zero-Dependencies)
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
 - **Motor de Escaneo:** Analizador estático y empaquetador Repomix integrado en `src/scanner.js`
+- **Mantenimiento Preventivo:** Inventario de componentes, frescura y brechas en `src/maintenance.js`; informe en `contextbase/componentes.md`; comando `contextbase audit`
 
 ### Módulos Principales del Sistema:
 - `bin/contextbase.js`: Punto de entrada ejecutable CLI.
@@ -40,6 +43,7 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 - `src/generator.js`: Generador de `fundamentos.md`, `changelog.md` y `tasklist.md`.
 - `src/rules.js`: Inyector universal de reglas de agente (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.).
 - `src/installer.js`: Instalador de la Skill global en el entorno de agentes.
+- `src/maintenance.js`: Motor de mantenimiento preventivo (inventario de componentes, frescura de versiones y verificación de brechas de seguridad).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
 
 ---
@@ -52,7 +56,8 @@ contextbase/
 ├── contextbase/
 │   ├── fundamentos.md
 │   ├── changelog.md
-│   └── tasklist.md
+│   ├── tasklist.md
+│   └── componentes.md
 ├── skills/
 │   └── contextbase/
 │       └── SKILL.md

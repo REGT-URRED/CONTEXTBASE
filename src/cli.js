@@ -4,6 +4,7 @@ import { analyzeProject, packRepository } from './scanner.js';
 import { writeContextBase } from './generator.js';
 import { injectAgentRules } from './rules.js';
 import { installSkill } from './installer.js';
+import { runMaintenance } from './maintenance.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -20,8 +21,11 @@ const c = {
 };
 
 function banner() {
+  let version = '1.0.0';
+  try { version = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || version; } catch {}
+  const vPad = `CONTEXTBASE (v${version})`;
   console.log(`\n${c.cyan}${c.bold}╔════════════════════════════════════════════════════════════════╗`);
-  console.log(`║                   CONTEXTBASE (v1.0.0)                         ║`);
+  console.log(`║                   ${vPad.padEnd(44, ' ')}║`);
   console.log(`║   Memoria Técnica Persistente Minimalista para Agentes de IA   ║`);
   console.log(`╚════════════════════════════════════════════════════════════════╝${c.reset}\n`);
 }
@@ -36,6 +40,7 @@ function showHelp() {
   console.log(`                        tasklist.md e inyecta reglas universales para agentes.`);
   console.log(`  ${c.cyan}status${c.reset} | ${c.cyan}check${c.reset}        Muestra el estado visual de la memoria y tareas.`);
   console.log(`  ${c.cyan}pack${c.reset} [archivo]        Empaqueta el código fuente estilo Repomix en un solo archivo.`);
+  console.log(`  ${c.cyan}audit${c.reset}               Regenera el inventario de componentes y verifica brechas de seguridad (componentes.md).`);
   console.log(`  ${c.cyan}dump${c.reset}                  Vuelca el contenido completo de contextbase en pantalla.`);
   console.log(`  ${c.cyan}install-skill${c.reset}         Instala la Skill de ContextBase en el directorio global.`);
   console.log(`  ${c.cyan}log${c.reset} <mensaje>         Registra un nuevo cambio en contextbase/changelog.md.`);
@@ -93,6 +98,16 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
     console.log(`      ${c.gray}(Archivos previos conservados. Usa --force si deseas regenerarlos)${c.reset}`);
   }
 
+  // Paso 3.5: Mantenimiento preventivo automático
+  console.log(`\n${c.magenta}[3.5/5] Mantenimiento Preventivo:${c.reset} Componentes, versiones y brechas de seguridad...`);
+  try {
+    const maint = runMaintenance(targetDir);
+    const depsCount = maint.inventory.reduce((acc, row) => acc + row.deps.length, 0);
+    console.log(`      ${c.green}✓ Generado:${c.reset} contextbase/componentes.md (${depsCount} componentes inventariados)`);
+  } catch (e) {
+    console.log(`      ${c.gray}Nota: mantenimiento preventivo omitido (${e.message})${c.reset}`);
+  }
+
   // Paso 4: Inyección de reglas para agentes de código
   console.log(`\n${c.cyan}[4/5] Inyección de Directivas para Agentes de Código:${c.reset}`);
   const rulesUpdated = injectAgentRules(targetDir);
@@ -140,6 +155,7 @@ export function runStatus(targetDir = process.cwd()) {
   const fundamentosPath = path.join(contextDir, 'fundamentos.md');
   const changelogPath = path.join(contextDir, 'changelog.md');
   const tasklistPath = path.join(contextDir, 'tasklist.md');
+  const componentesPath = path.join(contextDir, 'componentes.md');
 
   console.log(`${c.bold}ESTADO DE LA MEMORIA TÉCNICA (${targetDir}):${c.reset}\n`);
 
@@ -147,7 +163,8 @@ export function runStatus(targetDir = process.cwd()) {
   const files = [
     { name: 'fundamentos.md', path: fundamentosPath },
     { name: 'changelog.md', path: changelogPath },
-    { name: 'tasklist.md', path: tasklistPath }
+    { name: 'tasklist.md', path: tasklistPath },
+    { name: 'componentes.md', path: componentesPath }
   ];
 
   for (const f of files) {
@@ -158,6 +175,16 @@ export function runStatus(targetDir = process.cwd()) {
     } else {
       console.log(`  ${c.red}○${c.reset} ${c.bold}${f.name}${c.reset} ${c.red}(Faltante)${c.reset}`);
     }
+  }
+
+  // Vigencia del informe de mantenimiento preventivo
+  if (fs.existsSync(componentesPath)) {
+    const dias = Math.floor((Date.now() - fs.statSync(componentesPath).mtimeMs) / 86400000);
+    if (dias > 7) {
+      console.log(`\n${c.yellow}⚠ Informe de componentes desactualizado (${dias} días). Regenerar con:${c.reset} ${c.green}contextbase audit${c.reset}`);
+    }
+  } else {
+    console.log(`\n${c.yellow}⚠ Falta contextbase/componentes.md. Generar con:${c.reset} ${c.green}contextbase audit${c.reset}`);
   }
 
   // Tareas
@@ -208,6 +235,9 @@ export function runTask(action, taskText, targetDir = process.cwd()) {
       console.log(`${c.yellow}Uso: contextbase task done "<texto o parte de la tarea>"${c.reset}`);
       return;
     }
+    const lines = content.split('\n');
+    let matched = false;
+    const query = taskText.toLowerCase();
     let completedLine = null;
     const remainingLines = [];
 
@@ -384,6 +414,22 @@ export async function cli(args = process.argv.slice(2)) {
   if (command === 'pack') {
     const out = args[1];
     runPack(out, process.cwd());
+    return;
+  }
+
+  if (command === 'audit') {
+    await ensureContextBase(process.cwd());
+    banner();
+    console.log(`${c.magenta}[Mantenimiento] Inventario de componentes + verificación de brechas de seguridad...${c.reset}`);
+    try {
+      const maint = runMaintenance(process.cwd());
+      for (const s of maint.security) {
+        console.log(`  ${c.yellow}•${c.reset} ${s.eco}: ${s.detail.replace(/\n/g, ' | ')}`);
+      }
+      console.log(`${c.green}✓ Informe regenerado en:${c.reset} contextbase/componentes.md\n`);
+    } catch (e) {
+      console.log(`${c.red}Error en mantenimiento preventivo: ${e.message}${c.reset}\n`);
+    }
     return;
   }
 

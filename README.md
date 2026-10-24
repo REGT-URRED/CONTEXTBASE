@@ -121,6 +121,13 @@ contextbase pack mi-repositorio.txt
 ### `contextbase dump`
 Vuelca los tres documentos de `contextbase/` directamente en la terminal (ideal para inyectar en el contexto de un chat o sesión de IA).
 
+### `contextbase audit` *(Mantenimiento Preventivo Automático)*
+Regenera `contextbase/componentes.md`: inventario de componentes con su versión instalada y última modificación del manifiesto, frescura de versiones (`npm outdated`, `pip list --outdated`) y verificación final de brechas de seguridad conocidas (`npm audit`, `pip-audit` cuando esté disponible):
+```bash
+contextbase audit
+```
+También se ejecuta automáticamente como paso `[3.5/5]` durante `contextbase init`. Agentes y buenos desarrolladores lo revisan al iniciar un proyecto o sesión, y lo regeneran como verificación final al cerrar cada cambio, sin saturar las instrucciones del agente.
+
 ### `contextbase install-skill`
 Copia e instala la Skill de ContextBase en el directorio global de agentes (`~/.gemini/config/skills/contextbase`).
 

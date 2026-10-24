@@ -55,6 +55,8 @@ Este documento establece las bases arquitectónicas, directivas operativas y con
    - No dejar código muerto ni archivos huérfanos.
 4. **Idioma de Documentación:**
    - Todas las notas técnicas, bitácoras y registros en \`contextbase/\` deben mantenerse estrictamente en **español**.
+5. **Mantenimiento Preventivo Automático:**
+   - Revisar \`contextbase/componentes.md\` al iniciar un proyecto o sesión, y regenerarlo con \`contextbase audit\` como verificación final al cerrar cada cambio (estado de componentes y brechas de seguridad).
 
 ---
 
@@ -65,6 +67,7 @@ Este documento establece las bases arquitectónicas, directivas operativas y con
 - **Tecnologías y Frameworks Clave:** ${frameworksStr}
 - **Lenguajes Dominantes:** ${topLangs}
 - **Dependencias Principales:** ${depsSample}
+- **Estado de Componentes y Seguridad:** \`contextbase/componentes.md\` (inventario, frescura de versiones y brechas; regenerar con \`contextbase audit\`)
 
 ### Comandos de Ejecución y Scripts Disponibles:
 ${scriptsList}
