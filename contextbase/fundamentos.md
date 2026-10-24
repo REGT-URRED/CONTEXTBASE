@@ -28,7 +28,7 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 
 ## 3. Arquitectura y Contexto Técnico General
 - **Nombre:** `contextbase`
-- **Versión:** `1.1.0`
+- **Versión:** `1.2.0`
 - **Ecosistema:** Node.js (ESM puro, >= 18.0.0)
 - **Dependencias Externas:** 0 (Zero-Dependencies)
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
@@ -44,6 +44,12 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 - `src/rules.js`: Inyector universal de reglas de agente (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.).
 - `src/installer.js`: Instalador de la Skill global en el entorno de agentes.
 - `src/maintenance.js`: Motor de mantenimiento preventivo (inventario de componentes, frescura de versiones y verificación de brechas de seguridad).
+- `src/context.js`: Estado estructurado del proyecto, digest compacto para agentes y evaluación de salud.
+- `src/changelog.js`: Inserción de entradas y rotación de la bitácora a archivos anuales.
+- `src/fsutil.js`: Escritura atómica y bloqueo asesor por archivo (concurrencia multiagente).
+- `src/hooks.js`: Instalación del hook `post-commit` de autoguardado.
+- `src/mcp.js`: Servidor MCP sobre stdio con tools nativas para agentes compatibles.
+- `test/`: Suite de pruebas con el runner nativo `node:test` (sin dependencias).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
 
 ---
@@ -62,8 +68,13 @@ contextbase/
 │   └── contextbase/
 │       └── SKILL.md
 ├── src/
+│   ├── changelog.js
 │   ├── cli.js
+│   ├── context.js
+│   ├── fsutil.js
 │   ├── generator.js
+│   ├── hooks.js
+│   ├── mcp.js
 │   ├── index.js
 │   ├── installer.js
 │   ├── rules.js
@@ -75,6 +86,18 @@ contextbase/
 ├── package.json
 └── README.md
 ```
+
+<!-- CONTEXTBASE:SYNC:START -->
+## Contexto Técnico Sincronizado (auto)
+> Generado por `contextbase sync`. No editar dentro de este bloque: se reemplaza completo.
+- **Versión:** 1.2.0
+- **Ecosistema:** Node.js / JavaScript / TypeScript
+- **Frameworks:** Librerías estándar / Vanilla
+- **Lenguajes dominantes:** JavaScript (23), Markdown (9), JSON (2)
+- **Dependencias:** Sin dependencias externas registradas.
+- **Scripts:** start, test, audit, mcp
+- **Directorios raíz:** .atl, bin, contextbase, skills, src, test
+<!-- CONTEXTBASE:SYNC:END -->
 
 ---
 *Generado y consolidado por ContextBase CLI el 7/10/2026.*

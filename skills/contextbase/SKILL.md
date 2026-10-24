@@ -48,3 +48,8 @@ Cuando el usuario indique "instala esto", "inicializa memoria" o se trabaje en u
 - `contextbase pack`: Empaquetar el repositorio estilo Repomix para análisis en contexto.
 - `contextbase dump`: Volcar todo el contenido de contextbase para alimentar el prompt.
 - `contextbase audit`: Regenerar el inventario de componentes, su frescura de versiones y la verificación de brechas de seguridad conocidas en `contextbase/componentes.md`.
+- `contextbase context`: Digest compacto (pendientes, progreso, brechas, siguiente acción) para iniciar sesión con poco contexto.
+- `contextbase status --json` / `--check`: estado estructurado para agentes y CI; `--check` sale con código 1 si hay problemas.
+- `contextbase sync`: Sincroniza el bloque técnico de `fundamentos.md` y reinyecta reglas sin borrar notas manuales.
+- `contextbase hook`: Autoguardado; registra cada commit en `changelog.md` mediante hook `post-commit`.
+- `contextbase mcp`: Servidor MCP sobre stdio con tools nativas para agentes compatibles.

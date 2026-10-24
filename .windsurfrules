@@ -1,4 +1,5 @@
 <!-- CONTEXTBASE:START -->
+<!-- CONTEXTBASE:v1.2.0 -->
 ## Memoria Persistente y Bitácora del Proyecto (contextbase)
 Este proyecto utiliza un sistema de memoria técnica persistente en la carpeta `contextbase/`.
 

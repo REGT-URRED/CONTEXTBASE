@@ -128,6 +128,48 @@ contextbase audit
 ```
 También se ejecuta automáticamente como paso `[3.5/5]` durante `contextbase init`. Agentes y buenos desarrolladores lo revisan al iniciar un proyecto o sesión, y lo regeneran como verificación final al cerrar cada cambio, sin saturar las instrucciones del agente.
 
+### `contextbase context` *(digest para sesiones de agente)*
+Genera un resumen compacto y determinista (menos de 2k tokens) con tareas pendientes, progreso, estado de componentes y la siguiente acción recomendada. Ideal al iniciar una sesión sin volcar archivos completos:
+```bash
+contextbase context
+contextbase context --json
+```
+
+### `contextbase status --json` y `--check`
+`status --json` devuelve estado estructurado (archivos, tareas, seguridad, salud, reglas) para agentes y CI. `--check` termina con código 1 si hay brechas critical/high, informe de componentes vencido o reglas de agente desactualizadas:
+```bash
+contextbase status --json
+contextbase status --check
+```
+
+### `contextbase sync` *(sincronización idempotente)*
+Regenera el bloque técnico de `fundamentos.md` entre marcadores `CONTEXTBASE:SYNC`, sin tocar notas manuales, y reinyecta el bloque de reglas en los archivos de agente. Soluciona la deriva entre proyectos existentes y la versión instalada:
+```bash
+contextbase sync
+```
+
+### `contextbase hook [install|remove]` *(autoguardado)*
+Instala un hook `post-commit` que registra automáticamente cada commit en `contextbase/changelog.md`. El autoguardado deja de depender de que el agente se acuerde:
+```bash
+contextbase hook
+contextbase hook remove
+```
+
+### `contextbase mcp` *(servidor MCP sobre stdio)*
+Expone ContextBase como tools MCP nativas (`contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`) para cualquier agente compatible, sin shell ni parseo de ANSI. Ejemplo de configuración de cliente MCP:
+```json
+{
+  "mcpServers": {
+    "contextbase": { "command": "contextbase", "args": ["mcp"] }
+  }
+}
+```
+
+### Pruebas
+```bash
+npm test
+```
+Ejecuta la suite con el runner nativo `node:test` (sin dependencias): escaneo y redacción de secretos, rotación de bitácora, bloqueo de escritura, inyección de reglas, tareas, digest, sincronización, hook y protocolo MCP.
 ### `contextbase install-skill`
 Copia e instala la Skill de ContextBase en el directorio global de agentes (`~/.gemini/config/skills/contextbase`).
 

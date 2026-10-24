@@ -5,6 +5,10 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-24] v1.2.0: integración nativa. Servidor MCP sobre stdio (`src/mcp.js`) con seis tools; `status --json` y `status --check`; digest `contextbase context`; `contextbase sync` con bloque idempotente en fundamentos.md; hook `post-commit` de autoguardado (`src/hooks.js`); escritura atómica y bloqueo por archivo (`src/fsutil.js`, `src/changelog.js`).
+- [2026-10-24] Bitácora con rotación automática a `changelog-YYYY.md` al superar 500 entradas, para no inflar el contexto de los agentes.
+- [2026-10-24] Seguridad del empaquetado: `pack` redacta secretos conocidos y el escáner ignora `.env`/`.env.*`; verificadores `cargo audit` y `govulncheck` cuando están instalados, y versiones instaladas de pip/Cargo.lock/go.mod en el inventario.
+- [2026-10-24] Suite de pruebas con `node:test` sin dependencias: 20 casos (escáner, rotación, bloqueo, reglas, tareas, digest, sync, hook, MCP, mantenimiento, generador).
 - [2026-10-24] Aviso de vigencia del informe de mantenimiento en `contextbase status`: detecta `componentes.md` faltante o con más de 7 días sin regenerar y sugiere `contextbase audit` (sin costo de red).
 - [2026-10-24] Implementación del mantenimiento preventivo automático: nuevo módulo `src/maintenance.js` que inventaría componentes (manifiestos, última modificación y versión instalada), mide frescura (`npm outdated`, `pip list --outdated`) y verifica brechas de seguridad conocidas (`npm audit`, `pip-audit`).
 - [2026-10-24] Nuevo comando CLI `contextbase audit` que regenera `contextbase/componentes.md` (inventario + frescura + brechas) y paso `[3.5/5]` integrado en `init`.
@@ -30,7 +34,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 
 - Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere).
 - Incorporar pruebas unitarias automáticas con el runner nativo `node:test`.
-- Publicar en registro npm público si el usuario decide distribuirlo públicamente.
+- Publicar en registro npm público (nombre `contextbase` disponible; requiere `npm login`, la máquina no tiene sesión).
 
 ---
 *Nota: Registrar siempre cada nueva tarea completada en "Cambios Realizados" y actualizar los ítems pendientes en "Cambios por Hacer".*

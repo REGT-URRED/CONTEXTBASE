@@ -26,15 +26,18 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Regla de mantenimiento preventivo integrada en bloques de agente, generador y Skill global
 - [x] Corrección del subcomando `contextbase task done` (variables sin declarar)
 - [x] Aviso automático en `status` cuando el informe de componentes falta o supera 7 días
+- [x] Integración nativa: servidor MCP, `status --json`/`--check`, digest `context`, `sync` idempotente, hook `post-commit`
+- [x] Escritura atómica con bloqueo y rotación de bitácora
+- [x] Redacción de secretos en `pack` y exclusión de archivos `.env`
+- [x] Verificadores Rust (`cargo audit`) y Go (`govulncheck`) en el mantenimiento preventivo
+- [x] Suite de 20 pruebas con `node:test`
 
 ---
 
 ## Tareas Pendientes / En Progreso
 
 - [ ] Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere)
-- [ ] Ampliar verificadores de seguridad opcionales para Rust (`cargo audit`) y Go (`govulncheck`) cuando estén instalados
-- [ ] Incorporar pruebas unitarias automáticas con el runner nativo `node:test`
-- [ ] Publicar en registro npm público si el usuario decide distribuirlo públicamente
+- [ ] Publicar en npm (`npm login` pendiente en esta máquina)
 
 ---
 *Regla: Marcar con `[x]` las tareas completadas y agregar con `[ ]` cualquier nuevo requerimiento técnico.*
