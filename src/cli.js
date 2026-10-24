@@ -1,10 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { analyzeProject, packRepository } from './scanner.js';
-import { writeContextBase } from './generator.js';
+import { writeContextBase, syncFundamentos } from './generator.js';
 import { injectAgentRules } from './rules.js';
 import { installSkill } from './installer.js';
 import { runMaintenance } from './maintenance.js';
+import { writeAtomic, withLock } from './fsutil.js';
+import { appendEntry, archiveBody } from './changelog.js';
+import { collectState, buildDigest, evaluateHealth } from './context.js';
+import { installGitHook } from './hooks.js';
+import { startMcpServer } from './mcp.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -21,13 +26,16 @@ const c = {
 };
 
 function banner() {
-  let version = '1.0.0';
-  try { version = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || version; } catch {}
+  const version = readOwnVersion();
   const vPad = `CONTEXTBASE (v${version})`;
   console.log(`\n${c.cyan}${c.bold}╔════════════════════════════════════════════════════════════════╗`);
   console.log(`║                   ${vPad.padEnd(44, ' ')}║`);
   console.log(`║   Memoria Técnica Persistente Minimalista para Agentes de IA   ║`);
   console.log(`╚════════════════════════════════════════════════════════════════╝${c.reset}\n`);
+}
+
+export function readOwnVersion() {
+  try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; }
 }
 
 function showHelp() {
@@ -47,6 +55,12 @@ function showHelp() {
   console.log(`  ${c.cyan}task add${c.reset} <descripción> Añade una nueva tarea pendiente [ ] a tasklist.md.`);
   console.log(`  ${c.cyan}task done${c.reset} <texto>      Marca una tarea como completada [x] en tasklist.md.`);
   console.log(`  ${c.cyan}task list${c.reset}             Lista todas las tareas actuales.\n`);
+  console.log(`  ${c.cyan}context${c.reset} [--json]      Digest compacto para iniciar sesion (<=2k tokens).`);
+  console.log(`  ${c.cyan}sync${c.reset}                  Sincroniza bloque tecnico de fundamentos.md y reglas de agente.`);
+  console.log(`  ${c.cyan}hook${c.reset} [install|remove] Autoguardado: post-commit registra cada commit en changelog.md.`);
+  console.log(`  ${c.cyan}mcp${c.reset}                   Servidor MCP sobre stdio (tools para agentes compatibles).`);
+  console.log(`  ${c.cyan}status --json${c.reset}         Estado estructurado para agentes y CI.`);
+  console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);
   console.log(`  ${c.yellow}--pack${c.reset}                Genera también contextbase-pack.txt durante la inicialización.\n`);
@@ -142,7 +156,9 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
 /**
  * Comando: contextbase status
  */
-export function runStatus(targetDir = process.cwd()) {
+export function runStatus(targetDir = process.cwd(), options = {}) {
+  const state = collectState(targetDir);
+  if (options.json) { console.log(JSON.stringify(state, null, 2)); return state; }
   banner();
   const contextDir = path.join(targetDir, 'contextbase');
 
@@ -201,7 +217,22 @@ export function runStatus(targetDir = process.cwd()) {
     console.log(`  ${c.cyan}📊 Total:${c.reset}       ${total} (${pct}% completado)`);
   }
 
-  console.log('\n');
+  if (state.security.critical > 0 || state.security.high > 0) {
+    console.log(`\n${c.red}⚠ Brechas de seguridad:${c.reset} critical ${state.security.critical}, high ${state.security.high} (ver contextbase/componentes.md)`);
+  }
+
+  const ownVersion = readOwnVersion();
+  const drift = state.rules.versions.filter(r => r.version !== ownVersion);
+  if (drift.length > 0) {
+    console.log(`\n${c.yellow}⚠ Reglas de agente desactualizadas (v${drift[0].version} → v${ownVersion}):${c.reset} ${drift.map(d => d.file).join(', ')}`);
+    console.log(`  Sincronizar con: ${c.green}contextbase sync${c.reset}`);
+  }
+
+  if (options.check) {
+    const health = evaluateHealth(state, ownVersion);
+    if (health.ok) { console.log(`${c.green}✓ Salud OK${c.reset}\n`); } else { console.log(`${c.red}✗ Salud con problemas:${c.reset}`); for (const p of health.problems) console.log(`  - ${p}`); console.log(''); process.exitCode = 1; }
+  }
+  return state;
 }
 
 /**
@@ -228,7 +259,7 @@ export function runTask(action, taskText, targetDir = process.cwd()) {
     } else {
       content += `\n${targetHeader}\n${newTask}\n`;
     }
-    fs.writeFileSync(tasklistPath, content, 'utf8');
+    withLock(tasklistPath, () => writeAtomic(tasklistPath, content));
     console.log(`${c.green}✓ Tarea agregada con éxito:${c.reset} ${taskText}`);
   } else if (action === 'done') {
     if (!taskText) {
@@ -259,7 +290,7 @@ export function runTask(action, taskText, targetDir = process.cwd()) {
       } else {
         newContent = `${compHeader}\n${completedLine}\n\n${newContent}`;
       }
-      fs.writeFileSync(tasklistPath, newContent, 'utf8');
+      withLock(tasklistPath, () => writeAtomic(tasklistPath, newContent));
     } else {
       console.log(`${c.yellow}No se encontró ninguna tarea pendiente que coincida con:${c.reset} "${taskText}"`);
     }
@@ -294,19 +325,26 @@ export function runLog(logMessage, targetDir = process.cwd()) {
     return;
   }
 
-  let content = fs.readFileSync(changelogPath, 'utf8');
-  const targetHeader = '## Cambios Realizados';
   const dateStr = new Date().toISOString().split('T')[0];
   const newEntry = `- [${dateStr}] ${logMessage.trim()}`;
-
-  if (content.includes(targetHeader)) {
-    content = content.replace(targetHeader, `${targetHeader}\n${newEntry}`);
-  } else {
-    content = `## Cambios Realizados\n${newEntry}\n\n${content}`;
-  }
-
-  fs.writeFileSync(changelogPath, content, 'utf8');
+  const limit = 500;
+  const result = withLock(changelogPath, () => {
+    const current = fs.readFileSync(changelogPath, 'utf8');
+    const next = appendEntry(current, newEntry, limit);
+    writeAtomic(changelogPath, next.content);
+    if (next.rotated.length > 0) {
+      const archivePath = path.join(targetDir, 'contextbase', `changelog-${new Date().toISOString().slice(0, 4)}.md`);
+      const existing = fs.existsSync(archivePath) ? fs.readFileSync(archivePath, 'utf8') : '';
+      const body = archiveBody(next.rotated);
+      const merged = existing ? existing.replace(/\s*$/, '') + '\n' + next.rotated.join('\n') + '\n' : body;
+      writeAtomic(archivePath, merged);
+    }
+    return next;
+  });
   console.log(`${c.green}✓ Cambio registrado en contextbase/changelog.md:${c.reset} ${newEntry}`);
+  if (result.rotated.length > 0) {
+    console.log(`${c.gray}  (${result.rotated.length} entradas antiguas rotadas a changelog-${new Date().toISOString().slice(0, 4)}.md)${c.reset}`);
+  }
 }
 
 /**
@@ -389,7 +427,7 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === '--version' || command === '-v' || command === 'version') {
-    console.log('1.0.0');
+    console.log(readOwnVersion());
     return;
   }
 
@@ -407,7 +445,40 @@ export async function cli(args = process.argv.slice(2)) {
 
   if (command === 'status' || command === 'check') {
     await ensureContextBase(process.cwd());
-    runStatus(process.cwd());
+    runStatus(process.cwd(), { json: args.includes('--json'), check: args.includes('--check') || command === 'check' });
+    return;
+  }
+
+  if (command === 'sync') {
+    await ensureContextBase(process.cwd());
+    banner();
+    const analysis = analyzeProject(process.cwd());
+    const updated = syncFundamentos(process.cwd(), analysis);
+    const rules = injectAgentRules(process.cwd());
+    if (updated) console.log(`${c.green}✓ Bloque técnico sincronizado en:${c.reset} contextbase/fundamentos.md`);
+    console.log(`${c.green}✓ Reglas de agente reinyectadas en:${c.reset} ${rules.join(', ')}`);
+    const st = collectState(process.cwd());
+    if (!st.files['componentes.md'].exists || st.files['componentes.md'].days > 7) {
+      console.log(`${c.yellow}⚠ Informe de componentes pendiente. Ejecutar:${c.reset} contextbase audit`);
+    }
+    console.log('');
+    return;
+  }
+
+  if (command === 'hook') {
+    const result = installGitHook(process.cwd(), args[1] || 'install');
+    console.log((result.ok ? c.green + '✓ ' : c.red + '✗ ') + result.message + c.reset);
+    return;
+  }
+
+  if (command === 'mcp') {
+    await startMcpServer(process.cwd());
+    return;
+  }
+
+  if (command === 'context') {
+    await ensureContextBase(process.cwd());
+    if (args.includes('--json')) { console.log(JSON.stringify(collectState(process.cwd()), null, 2)); } else { console.log(buildDigest(collectState(process.cwd()), readOwnVersion())); }
     return;
   }
 

@@ -1,5 +1,11 @@
-export { cli, runInit, runStatus, runTask, runLog, runDump, runPack, ensureContextBase } from './cli.js';
-export { analyzeProject, packRepository, scanFiles, extractProjectMetadata, extractGitHistory, extractCodeTodos } from './scanner.js';
-export { generateFundamentos, generateChangelog, generateTasklist, writeContextBase } from './generator.js';
-export { injectAgentRules, CONTEXTBASE_RULE_BLOCK } from './rules.js';
+export { cli, runInit, runStatus, runTask, runLog, runDump, runPack, ensureContextBase, readOwnVersion } from './cli.js';
+export { analyzeProject, packRepository, scanFiles, extractProjectMetadata, extractGitHistory, extractCodeTodos, redactSecrets } from './scanner.js';
+export { generateFundamentos, generateChangelog, generateTasklist, writeContextBase, syncFundamentos, buildSyncBlock } from './generator.js';
+export { injectAgentRules, CONTEXTBASE_RULE_BLOCK, CONTEXTBASE_VERSION } from './rules.js';
 export { installSkill } from './installer.js';
+export { runMaintenance, generateComponentes } from './maintenance.js';
+export { collectState, buildDigest, evaluateHealth } from './context.js';
+export { appendEntry, archiveBody } from './changelog.js';
+export { writeAtomic, withLock } from './fsutil.js';
+export { installGitHook } from './hooks.js';
+export { startMcpServer } from './mcp.js';

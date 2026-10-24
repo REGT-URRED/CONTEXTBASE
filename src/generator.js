@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeAtomic } from './fsutil.js';
 
 /**
  * Genera el contenido de contextbase/fundamentos.md
@@ -84,6 +85,56 @@ ${topDirs}
 ---
 *Generado automáticamente por ContextBase CLI el ${new Date().toLocaleDateString('es-ES')}.*
 `;
+}
+
+const SYNC_START = '<!-- CONTEXTBASE:SYNC:START -->';
+const SYNC_END = '<!-- CONTEXTBASE:SYNC:END -->';
+
+/**
+ * Bloque autogenerado con el contexto tecnico actual (dependencias, scripts, estructura).
+ * sync lo reemplaza sin tocar notas manuales fuera de los marcadores.
+ */
+export function buildSyncBlock(analysis) {
+  const { metadata, directories, languages } = analysis;
+  const frameworks = metadata.frameworks.length > 0 ? metadata.frameworks.join(', ') : 'Librerías estándar / Vanilla';
+  const deps = metadata.dependencies.slice(0, 20).join(', ') || 'Sin dependencias externas registradas.';
+  const topDirs = directories.filter(d => !d.includes('/')).slice(0, 10).join(', ') || 'raíz';
+  const scripts = Object.keys(metadata.scripts || {}).join(', ') || 'sin scripts';
+  const langs = Object.entries(languages).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([l, n]) => l + ' (' + n + ')').join(', ') || 'no detectados';
+  const line = s => '- ' + s;
+  return [
+    SYNC_START,
+    '## Contexto Técnico Sincronizado (auto)',
+    '> Generado por `contextbase sync`. No editar dentro de este bloque: se reemplaza completo.',
+    line('**Versión:** ' + metadata.version),
+    line('**Ecosistema:** ' + metadata.type),
+    line('**Frameworks:** ' + frameworks),
+    line('**Lenguajes dominantes:** ' + langs),
+    line('**Dependencias:** ' + deps),
+    line('**Scripts:** ' + scripts),
+    line('**Directorios raíz:** ' + topDirs),
+    SYNC_END
+  ].join('\n');
+}
+
+/**
+ * Inserta o reemplaza el bloque sincronizado dentro de fundamentos.md, preservando el texto manual.
+ * Devuelve la ruta actualizada o null si el archivo no existe.
+ */
+export function syncFundamentos(projectDir, analysis) {
+  const file = path.join(projectDir, 'contextbase', 'fundamentos.md');
+  if (!fs.existsSync(file)) return null;
+  const block = buildSyncBlock(analysis);
+  let content = fs.readFileSync(file, 'utf8');
+  if (content.includes(SYNC_START) && content.includes(SYNC_END)) {
+    content = content.replace(new RegExp(SYNC_START + '[\\s\\S]*?' + SYNC_END), block);
+  } else {
+    const footer = content.search(/\n---\r?\n\*Generado/);
+    if (footer !== -1) content = content.slice(0, footer) + '\n' + block + '\n' + content.slice(footer);
+    else content = content.replace(/\s*$/, '') + '\n\n' + block + '\n';
+  }
+  writeAtomic(file, content);
+  return file;
 }
 
 /**
@@ -197,17 +248,17 @@ export function writeContextBase(projectDir, analysis, options = {}) {
 
   // Si no forzar overwrite, respetar si ya existían para no borrar notas manuales previas
   if (!fs.existsSync(fundamentosPath) || options.force) {
-    fs.writeFileSync(fundamentosPath, generateFundamentos(analysis), 'utf8');
+    writeAtomic(fundamentosPath, generateFundamentos(analysis));
     filesWritten.push('contextbase/fundamentos.md');
   }
 
   if (!fs.existsSync(changelogPath) || options.force) {
-    fs.writeFileSync(changelogPath, generateChangelog(analysis), 'utf8');
+    writeAtomic(changelogPath, generateChangelog(analysis));
     filesWritten.push('contextbase/changelog.md');
   }
 
   if (!fs.existsSync(tasklistPath) || options.force) {
-    fs.writeFileSync(tasklistPath, generateTasklist(analysis), 'utf8');
+    writeAtomic(tasklistPath, generateTasklist(analysis));
     filesWritten.push('contextbase/tasklist.md');
   }
 

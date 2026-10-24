@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+export const CONTEXTBASE_VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; }
+})();
+
 export const CONTEXTBASE_RULE_BLOCK = `<!-- CONTEXTBASE:START -->
+<!-- CONTEXTBASE:v${CONTEXTBASE_VERSION} -->
 ## Memoria Persistente y Bitácora del Proyecto (contextbase)
 Este proyecto utiliza un sistema de memoria técnica persistente en la carpeta \`contextbase/\`.
 

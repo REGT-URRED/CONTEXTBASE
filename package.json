@@ -1,6 +1,6 @@
 {
   "name": "contextbase",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Sistema minimalista y universal de memoria persistente para proyectos y agentes de código (Antigravity, Claude Code, Cursor, OpenCode, etc.)",
   "type": "module",
   "main": "src/index.js",
@@ -26,8 +26,9 @@
   },
   "scripts": {
     "start": "node ./bin/contextbase.js",
-    "test": "node ./bin/contextbase.js status"
-,    "audit": "node ./bin/contextbase.js audit"
+    "test": "node --test",
+    "audit": "node ./bin/contextbase.js audit",
+    "mcp": "node ./bin/contextbase.js mcp"
   },
   "keywords": [
     "contextbase",
