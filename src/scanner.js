@@ -109,6 +109,8 @@ function shouldIgnore(relativeFilePath, ignorePatterns) {
     }
   }
 
+  if (parts.some(p => p === '.env' || p.startsWith('.env.'))) return true;
+
   const ext = path.extname(relativeFilePath).toLowerCase();
   if (BINARY_EXTENSIONS.has(ext)) return true;
 
@@ -306,6 +308,28 @@ export function extractCodeTodos(files, maxTodos = 25) {
   return todos;
 }
 
+const SECRET_PATTERNS = [
+  [/AKIA[0-9A-Z]{16}/g, 'AWS_ACCESS_KEY'],
+  [/gh[pousr]_[A-Za-z0-9]{36,}/g, 'GITHUB_TOKEN'],
+  [/sk-[A-Za-z0-9]{20,}/g, 'API_KEY'],
+  [/xox[baprs]-[A-Za-z0-9-]{10,}/g, 'SLACK_TOKEN'],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, 'PRIVATE_KEY']
+];
+
+/**
+ * Redacta secretos evidentes antes de empaquetar el contexto: evita filtrar credenciales al prompt.
+ * Devuelve el texto limpio y la cantidad de redacciones.
+ */
+export function redactSecrets(text) {
+  let count = 0;
+  let out = text;
+  for (const [re, label] of SECRET_PATTERNS) {
+    out = out.replace(re, () => { count++; return '[REDACTED:' + label + ']'; });
+  }
+  out = out.replace(/((?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*)(["'])([^"'\s]{8,})\2/gi, (m, prefix, q) => { count++; return prefix + q + '[REDACTED]' + q; });
+  return { text: out, count };
+}
+
 /**
  * Motor Repomix integrado: empaqueta el repositorio completo o genera un resumen
  */
@@ -324,6 +348,8 @@ export function packRepository(projectDir, options = {}) {
   }
   output += `\`\`\`\n\n`;
 
+  let redactionTotal = 0;
+
   output += `## Contenido del Código:\n\n`;
 
   for (const file of files) {
@@ -333,7 +359,10 @@ export function packRepository(projectDir, options = {}) {
         output += `### ${file.relativePath} (Omitido: archivo demasiado grande > ${Math.round(maxFileSize / 1024)}KB)\n\n`;
         continue;
       }
-      const content = fs.readFileSync(file.fullPath, 'utf8');
+      const raw = fs.readFileSync(file.fullPath, 'utf8');
+      const redacted = redactSecrets(raw);
+      redactionTotal += redacted.count;
+      const content = redacted.text;
       const ext = path.extname(file.name).replace('.', '');
       output += `### File: ${file.relativePath}\n`;
       output += `\`\`\`${ext}\n${content}\n\`\`\`\n\n`;
@@ -342,6 +371,7 @@ export function packRepository(projectDir, options = {}) {
     }
   }
 
+  if (redactionTotal > 0) output = output.replace('## Contenido del Código:', '## Contenido del Código (secretos redactados: ' + redactionTotal + '):');
   return output;
 }
 

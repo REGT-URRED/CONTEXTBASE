@@ -1,6 +1,7 @@
 ﻿import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { writeAtomic } from './fsutil.js';
 
 const MAX_DEPS_INVENTORY = 40;
 
@@ -33,6 +34,51 @@ function countSeverities(vulns) {
   return counts;
 }
 
+function pipInstalledVersions(projectDir) {
+  const out = run('pip list --format json', projectDir, 30000);
+  if (!out) return {};
+  try {
+    const map = {};
+    for (const d of JSON.parse(out)) map[String(d.name).toLowerCase()] = d.version;
+    return map;
+  } catch { return {}; }
+}
+
+function parseRequirements(file) {
+  try {
+    return fs.readFileSync(file, 'utf8').split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('#'))
+      .map(l => l.split(/[=><~!\[]/)[0].trim())
+      .filter(Boolean);
+  } catch { return []; }
+}
+
+function parseCargoLock(file) {
+  try {
+    if (!fs.existsSync(file)) return [];
+    const deps = [];
+    const blocks = fs.readFileSync(file, 'utf8').split(/\[\[package\]\]/).slice(1);
+    for (const b of blocks) {
+      const name = b.match(/^name\s*=\s*"([^"]+)"/m);
+      const version = b.match(/^version\s*=\s*"([^"]+)"/m);
+      if (name) deps.push({ name: name[1], installed: version ? version[1] : null });
+    }
+    return deps.slice(0, MAX_DEPS_INVENTORY);
+  } catch { return []; }
+}
+
+function parseGoMod(file) {
+  try {
+    const deps = [];
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([a-zA-Z0-9.\-\/]+)\s+(v[0-9][^\s]*)/);
+      if (m && m[1].includes('.')) deps.push({ name: m[1], installed: m[2] });
+    }
+    return deps.slice(0, MAX_DEPS_INVENTORY);
+  } catch { return []; }
+}
+
 /**
  * Inventario de componentes: manifiestos, última modificación y versión instalada.
  * Solo lectura local, sin red ni dependencias.
@@ -63,6 +109,12 @@ function collectInventory(projectDir) {
         });
       } catch { /* paquete corrupto: inventario vacío */ }
     }
+    if (m.file === 'requirements.txt') {
+      const installed = pipInstalledVersions(projectDir);
+      row.deps = parseRequirements(full).map(n => ({ name: n, installed: installed[n.toLowerCase()] || null }));
+    }
+    if (m.file === 'Cargo.toml') row.deps = parseCargoLock(path.join(projectDir, 'Cargo.lock'));
+    if (m.file === 'go.mod') row.deps = parseGoMod(full);
     inventory.push(row);
   }
   return inventory;
@@ -132,6 +184,28 @@ function securityScan(projectDir) {
       } else {
         results.push({ eco: checker.eco, total: 0, counts: {}, detail: 'Sin vulnerabilidades conocidas reportadas.' });
       }
+    }
+  }
+  if (fs.existsSync(path.join(projectDir, 'Cargo.toml')) && run('cargo audit --version', projectDir, 10000)) {
+    const out = run('cargo audit --json', projectDir, 120000);
+    if (out) {
+      try {
+        const data = JSON.parse(out);
+        const list = data.vulnerabilities?.list || [];
+        const counts = {};
+        for (const v of list) {
+          const sev = String(v.advisory?.severity || 'unknown').toLowerCase();
+          counts[sev] = (counts[sev] || 0) + 1;
+        }
+        results.push({ eco: 'Rust / cargo audit', total: list.length, counts, detail: list.length > 0 ? list.map(v => '- ' + (v.advisory?.id || 'advisory') + ': ' + (v.package?.name || '?')).join('\n') : 'Sin vulnerabilidades conocidas reportadas.' });
+      } catch { results.push({ eco: 'Rust / cargo audit', detail: 'Salida no interpretable; revisar con cargo audit.' }); }
+    }
+  }
+  if (fs.existsSync(path.join(projectDir, 'go.mod')) && run('govulncheck -version', projectDir, 10000)) {
+    const out = run('govulncheck ./...', projectDir, 180000);
+    if (out) {
+      const hits = (out.match(/Vulnerability #\d+/g) || []).length;
+      results.push({ eco: 'Go / govulncheck', total: hits, counts: {}, detail: hits > 0 ? hits + ' vulnerabilidades reportadas (revisar salida de govulncheck).' : 'Sin vulnerabilidades conocidas reportadas.' });
     }
   }
   return results;
@@ -206,6 +280,6 @@ export function runMaintenance(projectDir) {
   const contextDir = path.join(projectDir, 'contextbase');
   fs.mkdirSync(contextDir, { recursive: true });
   const file = path.join(contextDir, 'componentes.md');
-  fs.writeFileSync(file, generateComponentes(inventory, freshness, security), 'utf8');
+  writeAtomic(file, generateComponentes(inventory, freshness, security));
   return { file, inventory, freshness, security };
 }
