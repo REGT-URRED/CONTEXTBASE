@@ -5,6 +5,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-27] Implementacion fases 1-3: modulos base (detect, registry, guard, snapshot, strands, bootstrap), integracion CLI/MCP/context y pruebas (36/36)
 - [2026-10-24] v1.2.1: README reescrito para publicacion en npm (instalacion desde registro, quickstart, tabla de comandos, MCP, seguridad y arquitectura). Sin cambios de API ni de comandos.
 - [2026-10-24] v1.2.0: integración nativa. Servidor MCP sobre stdio (`src/mcp.js`) con seis tools; `status --json` y `status --check`; digest `contextbase context`; `contextbase sync` con bloque idempotente en fundamentos.md; hook `post-commit` de autoguardado (`src/hooks.js`); escritura atómica y bloqueo por archivo (`src/fsutil.js`, `src/changelog.js`).
 - [2026-10-24] Bitácora con rotación automática a `changelog-YYYY.md` al superar 500 entradas, para no inflar el contexto de los agentes.
@@ -16,7 +17,6 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 - [2026-10-24] Regla 5 de Mantenimiento Preventivo Automático añadida al bloque inyectado (`rules.js`), a `fundamentos.md` generado y a `skills/contextbase/SKILL.md`; verificación final obligatoria al cerrar cambios sin saturar instrucciones.
 - [2026-10-24] Corrección de código muerto en `contextbase task done` (`lines`, `matched` y `query` sin declarar); ahora funciona.
 - [2026-10-24] Versión 1.1.0: banner con versión dinámica desde `package.json` y script npm `audit`.
-
 - [2026-10-07] Limpieza y estandarización visual de README.md: eliminación total de emojis y sincronización con GitHub.
 - [2026-10-07] Incorporación de auto-creación y garantía de resiliencia (ensureContextBase) ante ausencia o modificación de contextbase/ en cualquier proyecto.
 - [2026-10-07] Reinicialización de repositorio Git limpio para REGT-URRED y publicación en GitHub.
@@ -28,6 +28,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 - [2026-10-07] Creación de interfaz CLI con banner ANSI, subcomandos de gestión de tareas (`task add`, `task done`, `task list`), bitácora (`log`), volcado (`dump`) y empaquetado (`pack`).
 - [2026-10-07] Vinculación global mediante `npm link` con ejecutables `contextbase`, `cb` y alias `openwiki`.
 - [2026-10-07] Redacción de documentación técnica completa en español en `README.md`.
+
 
 ---
 

@@ -9,6 +9,12 @@ import { writeAtomic, withLock } from './fsutil.js';
 import { appendEntry, archiveBody } from './changelog.js';
 import { collectState, buildDigest, evaluateHealth } from './context.js';
 import { installGitHook } from './hooks.js';
+import { runExtra } from './cli_extra.js';
+import { detectCli } from './detect.js';
+import { getRegistry, setEnabled } from './registry.js';
+import { check as guardCheck, repair as guardRepair, REPAIR_ALLOWLIST } from './guard.js';
+import * as snapshot from './snapshot.js';
+import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bootstrapRun } from './bootstrap.js';
 import { startMcpServer } from './mcp.js';
 
 // Estilos ANSI sin dependencias
@@ -60,6 +66,11 @@ function showHelp() {
   console.log(`  ${c.cyan}hook${c.reset} [install|remove] Autoguardado: post-commit registra cada commit en changelog.md.`);
   console.log(`  ${c.cyan}mcp${c.reset}                   Servidor MCP sobre stdio (tools para agentes compatibles).`);
   console.log(`  ${c.cyan}status --json${c.reset}         Estado estructurado para agentes y CI.`);
+  console.log(`  ${c.cyan}bootstrap${c.reset}            Bootstrap del entorno de agentes (detecta/instala/init/snapshot).`);
+  console.log(`  ${c.cyan}guard${c.reset}                Verifica integridad de archivos base y repara.`);
+  console.log(`  ${c.cyan}snapshot${c.reset}             Crea punto de restauracion de archivos base.`);
+  console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
+  console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);
@@ -530,6 +541,9 @@ export async function cli(args = process.argv.slice(2)) {
     runTask(subAction, text, process.cwd());
     return;
   }
+
+﻿
+  if (await runExtra(command, args, process.cwd())) return;
 
   // Si no se reconoce el comando pero no empieza con guion, intentar init o mostrar ayuda
   console.log(`${c.red}Comando no reconocido: ${command}${c.reset}\n`);

@@ -9,7 +9,12 @@ const TOOLS = [
   { name: 'contextbase_log', description: 'Registra un cambio realizado en contextbase/changelog.md.', inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: false } },
   { name: 'contextbase_task', description: 'Gestiona tareas: action add|done|list con text opcional.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, text: { type: 'string' } }, required: ['action'], additionalProperties: false } },
   { name: 'contextbase_audit', description: 'Regenera inventario de componentes, frescura de versiones y brechas de seguridad.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-  { name: 'contextbase_sync', description: 'Sincroniza bloque tecnico de fundamentos.md y reinyecta reglas de agente.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }
+  { name: 'contextbase_sync', description: 'Sincroniza bloque tecnico de fundamentos.md y reinyecta reglas de agente.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'contextbase_bootstrap', description: 'Bootstrap del entorno de agentes: detecta CLIs, instala faltantes, init y snapshot.', inputSchema: { type: 'object', properties: { cli: { type: 'string' }, tools: { type: 'array', items: { type: 'string' } }, yes: { type: 'boolean' }, autoConfirmRest: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'contextbase_guard', description: 'Verifica integridad de archivos base; opcionalmente repara desde fuentes oficiales.', inputSchema: { type: 'object', properties: { check: { type: 'boolean' }, repair: { type: 'boolean' }, show: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'contextbase_snapshot', description: 'Crea punto de restauracion de archivos base.', inputSchema: { type: 'object', properties: { note: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_restore', description: 'Restaura archivos base desde snapshot (id opcional).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_tools', description: 'Lista/habilita/deshabilita herramientas del registro.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, name: { type: 'string' } }, additionalProperties: false } }
 ];
 
 async function capture(fn) {
@@ -45,6 +50,50 @@ async function callTool(name, args = {}, projectDir) {
     const updated = gen.syncFundamentos(projectDir, analysis);
     const injected = rules.injectAgentRules(projectDir);
     return 'Sincronizado: ' + (updated ? 'fundamentos.md, ' : '') + 'reglas en ' + injected.join(', ');
+  }
+  if (name === 'contextbase_bootstrap') {
+    const bootstrap = await import('./bootstrap.js');
+    return JSON.stringify(await bootstrap.run(projectDir, args || {}));
+  }
+  if (name === 'contextbase_guard') {
+    const guard = await import('./guard.js');
+    const snapshot = await import('./snapshot.js');
+    const checkRes = guard.check(projectDir);
+    const repairs = [];
+    if (args && args.repair && Array.isArray(checkRes.drifts)) {
+      for (const d of checkRes.drifts) {
+        if (guard.REPAIR_ALLOWLIST && guard.REPAIR_ALLOWLIST[d.file]) {
+          const r = await guard.repair(projectDir, d.file);
+          repairs.push({ file: d.file, ok: !!r.ok, error: r.error || null });
+        }
+      }
+    }
+    let content = null;
+    if (args && args.show && Array.isArray(checkRes.drifts)) {
+      content = {};
+      for (const d of checkRes.drifts) {
+        try { content[d.file] = (await import('node:fs')).readFileSync((await import('node:path')).join(projectDir, d.file), 'utf8'); } catch {}
+      }
+    }
+    return JSON.stringify({ status: checkRes.status, drifts: checkRes.drifts, repairs, content });
+  }
+  if (name === 'contextbase_snapshot') {
+    const snapshot = await import('./snapshot.js');
+    const id = await snapshot.create(projectDir, (args && args.note) || '');
+    return String(id);
+  }
+  if (name === 'contextbase_restore') {
+    const snapshot = await import('./snapshot.js');
+    const r = await snapshot.restore(projectDir, args && args.id);
+    return JSON.stringify(r);
+  }
+  if (name === 'contextbase_tools') {
+    const reg = await import('./registry.js');
+    const action = (args && args.action) || 'list';
+    if (action === 'list') return JSON.stringify(reg.getRegistry(projectDir).map(t => ({ id: t.id, name: t.name, enabled: t.enabled, cliSupport: t.cliSupport })));
+    if (action === 'enable' && args && args.name) { reg.setEnabled(args.name, true, projectDir); return 'ok'; }
+    if (action === 'disable' && args && args.name) { reg.setEnabled(args.name, false, projectDir); return 'ok'; }
+    throw new Error('Accion invalida');
   }
   throw new Error('Tool desconocida: ' + name);
 }

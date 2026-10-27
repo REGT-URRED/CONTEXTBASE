@@ -19,3 +19,6 @@ repomix-output.*
 __pycache__/
 .venv/
 *.pyc
+
+# ContextBase snapshots
+contextbase/snapshot/

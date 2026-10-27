@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { check as guardCheck } from './guard.js';
 
 export const RULE_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules', '.windsurfrules', '.gemini/rules/contextbase.md', '.agents/rules/contextbase.md'];
 
@@ -63,7 +64,8 @@ export function collectState(projectDir) {
     files,
     tasks: parseTasks(taskText),
     security: { ...parseSecurity(componentesText), informe: files['componentes.md'].exists ? files['componentes.md'].days : null },
-    rules: ruleVersions(projectDir)
+    rules: ruleVersions(projectDir),
+    guard: (() => { try { const r = guardCheck(projectDir); return { status: r.status, drifts: (r.drifts || []).map(d => ({ file: d.file, kind: d.kind })) }; } catch { return { status: 'unknown', drifts: [] }; } })()
   };
 }
 
@@ -76,6 +78,7 @@ export function evaluateHealth(state, ownVersion) {
   if (state.security.high > 0) problems.push('Vulnerabilidades high: ' + state.security.high + ' (corregir antes de continuar).');
   const drift = state.rules.versions.filter(r => r.version !== ownVersion);
   if (drift.length > 0) problems.push('Reglas de agente desactualizadas en: ' + drift.map(d => d.file).join(', ') + ' (ejecutar contextbase sync).');
+  if (state.guard && state.guard.status !== 'ok') problems.push('Deriva en archivos base: ' + (state.guard.drifts || []).map(d => d.file).join(', ') + ' (ejecutar contextbase guard).');
   return { ok: problems.length === 0, problems };
 }
 
@@ -103,6 +106,11 @@ export function buildDigest(state, ownVersion) {
     const sev = sec.parsed ? ('critical ' + sec.critical + ', high ' + sec.high) : 'sin conteo interpretable';
     lines.push('- Informe de hace ' + state.files['componentes.md'].days + ' dias (' + sev + ').');
   }
+  lines.push('');
+  lines.push('## Guardia de archivos base');
+  if (!state.guard) lines.push('- Sin datos.');
+  else if (state.guard.status === 'ok') lines.push('- OK');
+  else lines.push('- Deriva: ' + (state.guard.drifts || []).map(d => d.file + ' (' + d.kind + ')').join(', '));
   lines.push('');
   lines.push('## Salud');
   const health = evaluateHealth(state, ownVersion);
