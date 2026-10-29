@@ -20,7 +20,8 @@ const TOOLS = [
   { name: 'contextbase_tools', description: 'Lista/habilita/deshabilita herramientas del registro.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, name: { type: 'string' } }, additionalProperties: false } },
   { name: 'contextbase_review', description: 'Review tipo thermos: modo prepare arma diff + contenidos + intencion + los 2 prompts de revisor; modo prompts devuelve solo prompts; modo merge fusiona dos reportes.', inputSchema: { type: 'object', properties: { mode: { type: 'string' }, base: { type: 'string' }, intent: { type: 'string' }, reports: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
   { name: 'contextbase_redundancy', description: 'Detecta redundancia en el entorno global: skills duplicados entre ubicaciones, referencias rotas en commands/agents, bloques de AGENTS.md y MCP duplicados.', inputSchema: { type: 'object', properties: { json: { type: 'boolean' } }, additionalProperties: false } },
-  { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } }
+  { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'contextbase_mission', description: 'Devuelve el prompt de mision de orquestacion y testing (Lead Orchestrator).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }
 ];
 
 async function capture(fn) {
@@ -117,6 +118,10 @@ async function callTool(name, args = {}, projectDir) {
     if (action === 'enable' && args && args.name) { reg.setEnabled(args.name, true, projectDir); return 'ok'; }
     if (action === 'disable' && args && args.name) { reg.setEnabled(args.name, false, projectDir); return 'ok'; }
     throw new Error('Accion invalida');
+  }
+  if (name === 'contextbase_mission') {
+    const mission = await import('./mission.js');
+    return mission.missionText();
   }
   throw new Error('Tool desconocida: ' + name);
 }

@@ -5,6 +5,7 @@ import { getRegistry, setEnabled } from './registry.js';
 import { check as guardCheck, repair as guardRepair, REPAIR_ALLOWLIST } from './guard.js';
 import * as snapshot from './snapshot.js';
 import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bootstrapRun } from './bootstrap.js';
+import { missionText } from './mission.js';
 
 const c = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m', cyan: '\x1b[36m',
@@ -14,6 +15,11 @@ const c = {
 
 export async function runExtra(command, args, cwd) {
   cwd = cwd || process.cwd();
+  if (command === 'mission') {
+    console.log(missionText());
+    return true;
+  }
+
   if (command === 'swarm') {
     console.log('Swarm (Strands): interface stub, not implemented (ready=false).');
     console.log('Use git worktrees + subagents for parallel work; contextbase tracks memory/bitacora only.');

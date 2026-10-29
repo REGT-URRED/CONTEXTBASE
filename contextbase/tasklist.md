@@ -5,6 +5,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] Mision de orquestacion/testing integrada (CLI mission + MCP contextbase_mission + link global)
 - [x] v1.3.1: campo `author` corregido en `package.json` y `.mailmap` agregado para normalizar autores de commit
 - [x] v1.3.1: release de GitHub con asset estable `contextbase.tgz` y README con la nueva via de instalacion
 - [x] npm descartado como canal de distribucion (cuenta `datersx` suspendida, nombre del paquete fuera de nuestro control)

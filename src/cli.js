@@ -81,6 +81,7 @@ function showHelp() {
   console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
   console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
   console.log(`  ${c.cyan}swarm${c.reset}               Estado del swarm Strands (stub, no implementado).`);
+  console.log(`  ${c.cyan}mission${c.reset}             Prompt de mision: orquestacion, ejecucion resiliente y testing.`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);
