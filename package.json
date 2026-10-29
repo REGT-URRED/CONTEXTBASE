@@ -30,7 +30,8 @@
     "audit": "node ./bin/contextbase.js audit",
     "mcp": "node ./bin/contextbase.js mcp",
     "pack:release": "npm pack",
-    "test:ci": "node --test"
+    "test:ci": "node --test",
+    "release:github": "node scripts/release-github.mjs"
   },
   "keywords": [
     "contextbase",

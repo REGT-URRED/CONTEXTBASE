@@ -209,3 +209,21 @@ Suite de pruebas con el runner nativo `node:test`: escaneo y redacci√≥n, rotaci√
 ## Licencia
 
 MIT
+
+---
+
+## Publicar release en GitHub (sin Actions)
+
+El empaquetado se hace local y se sube como asset del release:
+
+```bash
+npm run release:github
+```
+
+Requiere `gh` autenticado con permiso de escritura (`GH_TOKEN` o `gh auth login`). El comando corre tests, genera `contextbase.tgz` y lo adjunta al release `v<version>` (lo crea si no existe).
+
+Instalacion desde el release:
+
+```bash
+npm install -g https://github.com/REGT-URRED/CONTEXTBASE/releases/latest/download/contextbase.tgz
+```
