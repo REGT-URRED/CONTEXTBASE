@@ -5,6 +5,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-29] Push a GitHub completado: commit 4a45812 en main de REGT-URRED/CONTEXTBASE, autor y committer REGT-URRED <U19211826@utp.edu.pe>
 - [2026-10-29] Suite de pruebas ampliada de 36 a 60 casos (60/60 en verde): nuevos `test/review.test.js`, `test/slop.test.js` y `test/redundancy.test.js`, y corrección del conteo de tools en `test/mcp.test.js`
 - [2026-10-29] `review` y `slop` operan sobre el árbol de trabajo e incluyen archivos sin seguimiento; `review merge` exige exactamente dos reportes y falla con exit 1
 - [2026-10-29] `slop` puede fallar: exit 1 con hallazgos y 0 sin hallazgos; las reglas de prosa se aplican solo a prosa y comentarios, lo que elimina el falso positivo sobre su propia regex

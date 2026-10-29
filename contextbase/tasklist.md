@@ -5,6 +5,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
 
 - [x] Creación de carpeta de memoria persistente `contextbase/`
 - [x] Generación de documento estructurado `fundamentos.md`
@@ -55,7 +56,6 @@ Seguimiento del estado de tareas con alto contraste visual.
 
 - [ ] Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere)
 - [ ] Publicar en npm (`npm login` pendiente en esta máquina)
-- [ ] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
 
 ---
 *Regla: Marcar con `[x]` las tareas completadas y agregar con `[ ]` cualquier nuevo requerimiento técnico.*
