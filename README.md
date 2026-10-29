@@ -26,11 +26,12 @@ Cada sesión con un agente empieza en blanco: no recuerda decisiones, pendientes
 ## Instalación
 
 ```bash
-# global
-npm install -g contextbase
+# global, desde el release de GitHub (siempre la ultima version)
+npm install -g https://github.com/REGT-URRED/CONTEXTBASE/releases/latest/download/contextbase.tgz
 
-# o sin instalar
-npx contextbase init
+# o desde el codigo
+git clone https://github.com/REGT-URRED/CONTEXTBASE.git
+cd CONTEXTBASE && npm link
 ```
 
 Verificar:

@@ -1,6 +1,6 @@
 {
   "name": "contextbase",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Sistema minimalista y universal de memoria persistente para proyectos y agentes de código (Antigravity, Claude Code, Cursor, OpenCode, etc.)",
   "type": "module",
   "main": "src/index.js",
@@ -42,6 +42,6 @@
     "changelog",
     "tasklist"
   ],
-  "author": "REGT (rafa) <U19211826.@utp.edu.pe>",
+  "author": "REGT-URRED <U19211826@utp.edu.pe>",
   "license": "MIT"
 }

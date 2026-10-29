@@ -5,6 +5,9 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-29] v1.3.1: correccion del campo `author` en `package.json` (`U19211826.@utp.edu.pe` -> `U19211826@utp.edu.pe`) y normalizacion de identidades de commit con `.mailmap` (los commits de `cloud-assa` y `REGT (rafa)` ahora se resuelven como REGT-URRED)
+- [2026-10-29] v1.3.1: distribucion movida a GitHub Releases con asset de nombre estable `contextbase.tgz`; el paquete npm queda detenido en 1.2.0 por la suspension de la cuenta `datersx` y por no tener ownership sobre el nombre
+- [2026-10-29] v1.3.1: README actualizado con instalacion desde el asset del release y desde el repositorio, en reemplazo de `npm install -g contextbase`
 - [2026-10-29] Push a GitHub completado: commit 4a45812 en main de REGT-URRED/CONTEXTBASE, autor y committer REGT-URRED <U19211826@utp.edu.pe>
 - [2026-10-29] Suite de pruebas ampliada de 36 a 60 casos (60/60 en verde): nuevos `test/review.test.js`, `test/slop.test.js` y `test/redundancy.test.js`, y corrección del conteo de tools en `test/mcp.test.js`
 - [2026-10-29] `review` y `slop` operan sobre el árbol de trabajo e incluyen archivos sin seguimiento; `review merge` exige exactamente dos reportes y falla con exit 1
