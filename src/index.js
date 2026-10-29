@@ -9,3 +9,6 @@ export { appendEntry, archiveBody } from './changelog.js';
 export { writeAtomic, withLock } from './fsutil.js';
 export { installGitHook } from './hooks.js';
 export { startMcpServer } from './mcp.js';
+export * as review from './review.js';
+export * as redundancy from './redundancy.js';
+export * as slop from './slop.js';

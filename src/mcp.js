@@ -1,7 +1,10 @@
 import readline from 'node:readline';
+import fs from 'node:fs';
+
+const pkg = (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')); } catch { return {}; } })();
 
 const PROTOCOL = '2024-11-05';
-const SERVER = { name: 'contextbase', version: '1.2.0' };
+const SERVER = { name: 'contextbase', version: pkg.version || '0.0.0' };
 
 const TOOLS = [
   { name: 'contextbase_status', description: 'Estado estructurado de la memoria del proyecto: archivos, tareas, seguridad y salud.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -14,7 +17,10 @@ const TOOLS = [
   { name: 'contextbase_guard', description: 'Verifica integridad de archivos base; opcionalmente repara desde fuentes oficiales.', inputSchema: { type: 'object', properties: { check: { type: 'boolean' }, repair: { type: 'boolean' }, show: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_snapshot', description: 'Crea punto de restauracion de archivos base.', inputSchema: { type: 'object', properties: { note: { type: 'string' } }, additionalProperties: false } },
   { name: 'contextbase_restore', description: 'Restaura archivos base desde snapshot (id opcional).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false } },
-  { name: 'contextbase_tools', description: 'Lista/habilita/deshabilita herramientas del registro.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, name: { type: 'string' } }, additionalProperties: false } }
+  { name: 'contextbase_tools', description: 'Lista/habilita/deshabilita herramientas del registro.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, name: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_review', description: 'Review tipo thermos: modo prepare arma diff + contenidos + intencion + los 2 prompts de revisor; modo prompts devuelve solo prompts; modo merge fusiona dos reportes.', inputSchema: { type: 'object', properties: { mode: { type: 'string' }, base: { type: 'string' }, intent: { type: 'string' }, reports: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
+  { name: 'contextbase_redundancy', description: 'Detecta redundancia en el entorno global: skills duplicados entre ubicaciones, referencias rotas en commands/agents, bloques de AGENTS.md y MCP duplicados.', inputSchema: { type: 'object', properties: { json: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } }
 ];
 
 async function capture(fn) {
@@ -86,6 +92,23 @@ async function callTool(name, args = {}, projectDir) {
     const snapshot = await import('./snapshot.js');
     const r = await snapshot.restore(projectDir, args && args.id);
     return JSON.stringify(r);
+  }
+  if (name === 'contextbase_review') {
+    const rv = await import('./review.js');
+    const mode = (args && args.mode) || 'prepare';
+    if (mode === 'prompts') return rv.promptsText();
+    if (mode === 'merge') return rv.merge(Array.isArray(args.reports) ? args.reports : []);
+    return rv.prepare(projectDir, { base: args && args.base, intent: args && args.intent });
+  }
+  if (name === 'contextbase_redundancy') {
+    const rd = await import('./redundancy.js');
+    const r = rd.scan();
+    return (args && args.json) ? JSON.stringify(r, null, 2) : rd.render(r);
+  }
+  if (name === 'contextbase_slop') {
+    const sp = await import('./slop.js');
+    const r = sp.scan(projectDir, { base: args && args.base });
+    return (args && args.json) ? JSON.stringify(r, null, 2) : sp.render(r);
   }
   if (name === 'contextbase_tools') {
     const reg = await import('./registry.js');

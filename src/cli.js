@@ -16,6 +16,9 @@ import { check as guardCheck, repair as guardRepair, REPAIR_ALLOWLIST } from './
 import * as snapshot from './snapshot.js';
 import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bootstrapRun } from './bootstrap.js';
 import { startMcpServer } from './mcp.js';
+import * as review from './review.js';
+import * as redundancy from './redundancy.js';
+import * as slop from './slop.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -65,6 +68,11 @@ function showHelp() {
   console.log(`  ${c.cyan}sync${c.reset}                  Sincroniza bloque tecnico de fundamentos.md y reglas de agente.`);
   console.log(`  ${c.cyan}hook${c.reset} [install|remove] Autoguardado: post-commit registra cada commit en changelog.md.`);
   console.log(`  ${c.cyan}mcp${c.reset}                   Servidor MCP sobre stdio (tools para agentes compatibles).`);
+  console.log(`  ${c.cyan}review${c.reset} [base] [--intent "..."]  Paquete de revision tipo thermos: diff + contenidos + 2 prompts; --intent describe el alcance para los revisores.`);
+  console.log(`  ${c.cyan}review prompts${c.reset}                  Solo los dos prompts de revisor.`);
+  console.log(`  ${c.cyan}review merge${c.reset} <a.md> <b.md>      Fusiona exactamente dos reportes y marca coincidencias.`);
+  console.log(`  ${c.cyan}redundancy${c.reset} [--json]             Detecta skills principales y duplicados, referencias rotas y MCP repetidos.`);
+  console.log(`  ${c.cyan}slop${c.reset} [base] [--json]            Delivery gate antislop sobre el arbol de trabajo contra <base> (base inferida si se omite).`);
   console.log(`  ${c.cyan}status --json${c.reset}         Estado estructurado para agentes y CI.`);
   console.log(`  ${c.cyan}bootstrap${c.reset}            Bootstrap del entorno de agentes (detecta/instala/init/snapshot).`);
   console.log(`  ${c.cyan}guard${c.reset}                Verifica integridad de archivos base y repara.`);
@@ -482,6 +490,43 @@ export async function cli(args = process.argv.slice(2)) {
     return;
   }
 
+  if (command === 'review') {
+    const rest = args.slice(1);
+    let intent = '';
+    const clean = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '--intent') { intent = rest[++i] || ''; continue; }
+      clean.push(rest[i]);
+    }
+    if (clean[0] === 'prompts') { console.log(review.promptsText()); return; }
+    if (clean[0] === 'merge') {
+      const files = clean.slice(1);
+      if (files.length < 2) throw new Error('Uso: contextbase review merge <reporte-a.md> <reporte-b.md>');
+      const reports = files.map(f => {
+        if (!fs.existsSync(f) || !fs.statSync(f).isFile()) throw new Error('Reporte no encontrado: ' + f);
+        return fs.readFileSync(f, 'utf8');
+      });
+      console.log(review.merge(reports));
+      return;
+    }
+    console.log(review.prepare(process.cwd(), { base: clean[0], intent }));
+    return;
+  }
+
+  if (command === 'redundancy') {
+    const r = redundancy.scan();
+    console.log(args.includes('--json') ? JSON.stringify(r, null, 2) : redundancy.render(r));
+    return;
+  }
+
+  if (command === 'slop') {
+    const baseRef = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
+    const r = slop.scan(process.cwd(), { base: baseRef });
+    console.log(args.includes('--json') ? JSON.stringify(r, null, 2) : slop.render(r));
+    process.exitCode = r.findings.length > 0 ? 1 : 0;
+    return;
+  }
+
   if (command === 'mcp') {
     await startMcpServer(process.cwd());
     return;
@@ -542,7 +587,6 @@ export async function cli(args = process.argv.slice(2)) {
     return;
   }
 
-﻿
   if (await runExtra(command, args, process.cwd())) return;
 
   // Si no se reconoce el comando pero no empieza con guion, intentar init o mostrar ayuda

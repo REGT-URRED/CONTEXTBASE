@@ -53,3 +53,17 @@ Cuando el usuario indique "instala esto", "inicializa memoria" o se trabaje en u
 - `contextbase sync`: Sincroniza el bloque técnico de `fundamentos.md` y reinyecta reglas sin borrar notas manuales.
 - `contextbase hook`: Autoguardado; registra cada commit en `changelog.md` mediante hook `post-commit`.
 - `contextbase mcp`: Servidor MCP sobre stdio con tools nativas para agentes compatibles.
+- `contextbase review [base] [--intent "texto"]`: Paquete de revisión tipo thermos: diff contra `base`, contenidos de archivos cambiados, intención del usuario y los dos prompts de revisor.
+- `contextbase review prompts`: Imprime solo los dos prompts de revisor.
+- `contextbase review merge <reporte-a.md> <reporte-b.md>`: Fusiona dos reportes; exige exactamente dos archivos y falla con otra cantidad.
+- `contextbase redundancy [--json]`: Detecta redundancia global (skills duplicados, referencias rotas, bloques de `AGENTS.md` y MCP duplicados) e informa las skills principales.
+- `contextbase slop [base] [--json]`: Escanea el árbol de trabajo contra `base` (inferida si se omite) con las reglas heurísticas de antislop.
+- `contextbase bootstrap`: Prepara el entorno de agentes (detecta/instala/init/snapshot).
+- `contextbase guard`: Verifica la integridad de los archivos base y repara desde fuentes oficiales.
+- `contextbase snapshot`: Crea un punto de restauración de archivos base.
+- `contextbase restore [id]`: Restaura archivos base desde un snapshot.
+- `contextbase tools list|enable|disable`: Gestiona las herramientas del registro.
+
+### Tools MCP
+
+El servidor expone 14 tools: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`.

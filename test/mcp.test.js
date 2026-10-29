@@ -34,6 +34,10 @@ test('servidor MCP responde initialize, tools/list y tools/call', async () => {
   });
   assert.equal(responses.length, 3);
   assert.equal(responses[0].result.protocolVersion, '2024-11-05');
-  assert.equal(responses[1].result.tools.length, 11);
+  assert.equal(responses[1].result.tools.length, 14);
+  const names = responses[1].result.tools.map(t => t.name);
+  for (const name of ['contextbase_review', 'contextbase_redundancy', 'contextbase_slop']) {
+    assert.ok(names.includes(name), 'falta la tool ' + name);
+  }
   assert.ok(responses[2].result.content[0].text.includes('# ContextBase'));
 });

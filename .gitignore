@@ -22,3 +22,6 @@ __pycache__/
 
 # ContextBase snapshots
 contextbase/snapshot/
+
+# External tool artifacts (gentle-ai skill registry)
+.atl/

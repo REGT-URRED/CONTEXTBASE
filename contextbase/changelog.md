@@ -5,6 +5,18 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-29] Suite de pruebas ampliada de 36 a 60 casos (60/60 en verde): nuevos `test/review.test.js`, `test/slop.test.js` y `test/redundancy.test.js`, y corrección del conteo de tools en `test/mcp.test.js`
+- [2026-10-29] `review` y `slop` operan sobre el árbol de trabajo e incluyen archivos sin seguimiento; `review merge` exige exactamente dos reportes y falla con exit 1
+- [2026-10-29] `slop` puede fallar: exit 1 con hallazgos y 0 sin hallazgos; las reglas de prosa se aplican solo a prosa y comentarios, lo que elimina el falso positivo sobre su propia regex
+- [2026-10-29] Correcciones: off-by-one con `\ No newline at end of file`, JSONC con comentarios en línea y comas finales, referencias `agent:` comparadas sin distinguir mayúsculas y `knownAgents` reconstruido una sola vez por archivo
+- [2026-10-29] `redundancy` reporta familias principales (Superpowers, Ponytail, Antislop, ContextBase, OfficeCLI) y escanea `node_modules`, `plugins` y npm global
+- [2026-10-29] `src/index.js` con exportaciones namespaced; `.atl/` ignorado en `.gitignore`; `bin/contextbase.js` con bit ejecutable `100755`
+- [2026-10-29] Skill global sincronizada con la versión del repo en `~/.config/opencode/skills/contextbase` y `~/.gemini/config/skills/contextbase`
+- [2026-10-29] Corregida similitud de fusion en review merge: coeficiente de solapamiento sobre el conjunto menor con umbral 0.40 y minimo 2 terminos compartidos, porque Jaccard con 0.50 no detectaba coincidencias entre revisores independientes
+- [2026-10-29] v1.3.0: tres tools MCP nuevas (contextbase_review, contextbase_redundancy, contextbase_slop); servidor MCP pasa de 11 a 14 tools
+- [2026-10-29] v1.3.0: nuevo modulo src/slop.js y comando slop (--json) como delivery gate antislop sobre las lineas agregadas del diff con 5 reglas heuristas (palabras de relleno, not-X-but-Y, densidad de guiones, etiquetas en negrita, comentarios que repiten el codigo)
+- [2026-10-29] v1.3.0: nuevo modulo src/redundancy.js y comando redundancy (--json) que detecta skills duplicados entre .agents/.config-opencode/.gemini/.claude, referencias rotas en commands y agents, bloques AGENTS.md sin cierre o con paths inexistentes, y MCP duplicados o fuera de mcp.servers
+- [2026-10-29] v1.3.0: integra thermos como modulo nativo de revision (src/review.js + src/prompts/review-security.md y review-quality.md) con modos prepare/prompts/merge; CLI review, review prompts, review merge
 - [2026-10-27] Bump version to 1.2.2 for npm publish (latest)
 - [2026-10-27] Implementacion fases 1-3: modulos base (detect, registry, guard, snapshot, strands, bootstrap), integracion CLI/MCP/context y pruebas (36/36)
 - [2026-10-24] v1.2.1: README reescrito para publicacion en npm (instalacion desde registro, quickstart, tabla de comandos, MCP, seguridad y arquitectura). Sin cambios de API ni de comandos.

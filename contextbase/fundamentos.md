@@ -28,7 +28,7 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 
 ## 3. Arquitectura y Contexto Técnico General
 - **Nombre:** `contextbase`
-- **Versión:** `1.2.1`
+- **Versión:** `1.3.0`
 - **Ecosistema:** Node.js (ESM puro, >= 18.0.0)
 - **Dependencias Externas:** 0 (Zero-Dependencies)
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
@@ -49,6 +49,17 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 - `src/fsutil.js`: Escritura atómica y bloqueo asesor por archivo (concurrencia multiagente).
 - `src/hooks.js`: Instalación del hook `post-commit` de autoguardado.
 - `src/mcp.js`: Servidor MCP sobre stdio con tools nativas para agentes compatibles.
+- `src/bootstrap.js`: Recomendación y ejecución del arranque de un proyecto (`preview`, `run`).
+- `src/cli_extra.js`: Subcomandos extendidos del CLI que no viven en el enrutador principal.
+- `src/detect.js`: Detección de CLIs instalados, binarios en `PATH` y configuración MCP.
+- `src/guard.js`: Protección de archivos sensibles con línea base, hash y escaneo de cambios sospechosos.
+- `src/registry.js`: Registro de herramientas del proyecto y su estado habilitado.
+- `src/redundancy.js`: Detección de redundancia global (skills duplicados, referencias rotas, bloques `AGENTS.md` y MCP repetidos).
+- `src/review.js`: Revisión tipo thermos: diff, contenidos, prompts de revisor y fusión de reportes.
+- `src/slop.js`: Delivery gate antislop sobre el árbol de trabajo, con reglas de prosa y código por separado.
+- `src/snapshot.js`: Creación, listado, poda y restauración de snapshots del registro.
+- `src/strands.js`: Preparación de objetivos tipo Strands (fase 1: solo interfaz, sin ejecución).
+- `src/prompts/`: Prompts de revisor `review-security.md` y `review-quality.md`.
 - `test/`: Suite de pruebas con el runner nativo `node:test` (sin dependencias).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
 
@@ -64,22 +75,43 @@ contextbase/
 │   ├── changelog.md
 │   ├── tasklist.md
 │   └── componentes.md
+├── docs/
+│   └── 2026-10-27-contextbase-base-tool-design.md
 ├── skills/
 │   └── contextbase/
 │       └── SKILL.md
 ├── src/
+│   ├── bootstrap.js
 │   ├── changelog.js
 │   ├── cli.js
+│   ├── cli_extra.js
 │   ├── context.js
+│   ├── detect.js
 │   ├── fsutil.js
 │   ├── generator.js
+│   ├── guard.js
 │   ├── hooks.js
-│   ├── mcp.js
 │   ├── index.js
 │   ├── installer.js
+│   ├── maintenance.js
+│   ├── mcp.js
+│   ├── redundancy.js
+│   ├── registry.js
+│   ├── review.js
 │   ├── rules.js
-│   └── scanner.js
+│   ├── scanner.js
+│   ├── slop.js
+│   ├── snapshot.js
+│   ├── strands.js
+│   └── prompts/
+│       ├── review-quality.md
+│       └── review-security.md
+├── test/
+│   └── (19 archivos *.test.js)
+├── .atl/ (ignorado por git)
+├── .cursorrules
 ├── .gitignore
+├── .windsurfrules
 ├── AGENTS.md
 ├── CLAUDE.md
 ├── LICENSE
@@ -90,7 +122,7 @@ contextbase/
 <!-- CONTEXTBASE:SYNC:START -->
 ## Contexto Técnico Sincronizado (auto)
 > Generado por `contextbase sync`. No editar dentro de este bloque: se reemplaza completo.
-- **Versión:** 1.2.1
+- **Versión:** 1.3.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
 - **Lenguajes dominantes:** JavaScript (23), Markdown (9), JSON (2)

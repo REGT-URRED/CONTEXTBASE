@@ -1,4 +1,4 @@
-﻿# ContextBase
+# ContextBase
 
 Memoria técnica persistente, bitácora y lista de tareas para proyectos trabajados con agentes de código. Un comando deja el contexto listo y cualquier agente sabe dónde retomar.
 
@@ -98,7 +98,7 @@ Cualquier cliente compatible MCP puede usar ContextBase como tools, sin shell ni
 }
 ```
 
-Tools expuestas: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`.
+Tools expuestas: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`.
 
 ---
 
@@ -118,6 +118,11 @@ Tools expuestas: `contextbase_status`, `contextbase_context`, `contextbase_log`,
 | `contextbase dump` | Vuelca los documentos de `contextbase/` en terminal. |
 | `contextbase mcp` | Servidor MCP sobre stdio. |
 | `contextbase install-skill` | Reinstala la Skill global. |
+| `contextbase review [base] [--intent "texto"]` | Arma el paquete de revisión sobre el árbol de trabajo (incluye cambios sin confirmar) contra `<base>`: diff, contenidos de archivos cambiados, intención del usuario y los dos prompts de revisor. |
+| `contextbase review prompts` | Imprime solo los dos prompts de revisor. |
+| `contextbase review merge <reporte-a.md> <reporte-b.md>` | Fusiona dos reportes; exige exactamente dos archivos y falla con otra cantidad. |
+| `contextbase redundancy [--json]` | Detecta redundancia global e informa las skills principales. |
+| `contextbase slop [base] [--json]` | Escanea el árbol de trabajo contra `<base>` (inferida si se omite) con las reglas antislop; exit 1 cuando hay hallazgos y 0 cuando no. |
 
 ---
 
@@ -146,6 +151,23 @@ Sincronización de reglas entre versiones: `contextbase sync`.
 
 ---
 
+## Revisión, redundancia y antislop
+
+**Revisión tipo thermos.** `contextbase review [base] [--intent "texto"]` revisa el árbol de trabajo (los cambios sin confirmar incluidos) contra `<base>` y arma un paquete con el diff, el contenido de los archivos cambiados, la intención del usuario y dos prompts de revisor:
+
+| Revisor | Rol |
+| :--- | :--- |
+| A | Seguridad y correctitud |
+| B | Calidad y mantenibilidad |
+
+El flujo es `review` → dos revisores en paralelo con el mismo contexto → `review merge <a> <b>`. El merge destaca las coincidencias corroboradas por ambas pasadas y deja el resto como hallazgos que requieren criterio propio.
+
+**Redundancia (0 redundancia).** `contextbase redundancy` detecta skills duplicados entre ubicaciones, referencias rotas en `commands`/`agents`, bloques de `AGENTS.md` sin cierre o con rutas inexistentes, y MCP duplicados. Informa las familias principales (Superpowers, Ponytail, Antislop, ContextBase, OfficeCLI) y separa `Otros skills`.
+
+**Antislop.** `contextbase slop [base]` es un delivery gate heurístico sobre las líneas agregadas del árbol de trabajo, complementado por una lista de verificación manual. Devuelve exit 1 cuando hay hallazgos y 0 cuando no. Las reglas heurísticas no reemplazan el criterio humano: una corrida limpia no equivale a aprobación cuando no hay cambios que evaluar.
+
+---
+
 ## Arquitectura
 
 ```
@@ -160,6 +182,11 @@ src/fsutil.js           escritura atómica y bloqueo
 src/hooks.js            hook post-commit
 src/mcp.js              servidor MCP stdio
 src/rules.js            inyección de reglas con versión
+src/review.js           revisión tipo thermos: diff, contenidos, prompts y merge
+src/redundancy.js       redundancia del entorno global
+src/slop.js             delivery gate antislop sobre líneas agregadas
+src/prompts/review-security.md prompt de revisor de seguridad y correctitud
+src/prompts/review-quality.md  prompt de revisor de calidad y mantenibilidad
 src/installer.js        Skill global
 skills/contextbase/     definición de la Skill
 ```
@@ -174,7 +201,7 @@ Sin compilación, sin `node_modules` en runtime, arranque en milisegundos.
 npm test
 ```
 
-20 casos con `node:test`: escaneo y redacción, rotación, bloqueo, inyección de reglas, tareas, digest, sincronización, hook, MCP y mantenimiento.
+Suite de pruebas con el runner nativo `node:test`: escaneo y redacción, rotación, bloqueo, inyección de reglas, tareas, digest, sincronización, hook, MCP y mantenimiento.
 
 ---
 

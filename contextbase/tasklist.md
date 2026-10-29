@@ -33,12 +33,29 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Suite de 20 pruebas con `node:test`
 - [x] README orientado a npm (instalacion desde registro, quickstart, comandos, MCP, seguridad)
 
+- [x] v1.3.0: integracion de thermos en `src/review.js` + `src/prompts/review-security.md` y `review-quality.md` con modos prepare/prompts/merge
+- [x] v1.3.0: comandos CLI `review`, `review prompts`, `review merge` y `--intent`
+- [x] v1.3.0: `src/redundancy.js` y comando `redundancy` (skills duplicados, refs rotas, bloques AGENTS.md, MCP repetidos)
+- [x] v1.3.0: `src/slop.js` y comando `slop` como delivery gate antislop sobre el diff
+- [x] v1.3.0: tools MCP `contextbase_review`, `contextbase_redundancy`, `contextbase_slop` (14 tools total)
+- [x] Verificados `review`, `slop`, `redundancy` y `review merge` en repo git real y en los cuatro casos de error
+- [x] Corregida similitud de fusion en `merge`: coeficiente de solapamiento sobre el conjunto menor, umbral 0.40 y minimo 2 terminos compartidos
+- [x] Pruebas de los tres modulos nuevos: `test/review.test.js`, `test/slop.test.js`, `test/redundancy.test.js`
+- [x] Suite completa en verde: 60 casos, 60 aprobados, 0 fallidos
+- [x] `review` y `slop` cubren el arbol de trabajo y los archivos sin seguimiento
+- [x] Codigos de salida: `slop` devuelve 1 con hallazgos y 0 sin hallazgos; `review merge` falla con exit 1 fuera de dos reportes
+- [x] `redundancy` informa familias principales y escanea `node_modules`, `plugins` y npm global
+- [x] Skill global sincronizada en `~/.config/opencode` y `~/.gemini`
+- [x] Exportaciones namespaced en `src/index.js`
+- [x] `.atl/` agregado a `.gitignore`
+- [x] `bin/contextbase.js` con bit ejecutable `100755`
 ---
 
 ## Tareas Pendientes / En Progreso
 
 - [ ] Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere)
 - [ ] Publicar en npm (`npm login` pendiente en esta máquina)
+- [ ] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
 
 ---
 *Regla: Marcar con `[x]` las tareas completadas y agregar con `[ ]` cualquier nuevo requerimiento técnico.*
