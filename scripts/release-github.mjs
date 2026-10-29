@@ -18,7 +18,7 @@ console.log('[release] running tests...');
 run(process.execPath, ['--test']);
 
 console.log('[release] building npm tarball...');
-const packed = run('npm', ['pack', '--silent'], { stdio: ['ignore', 'pipe', 'inherit'] }).trim().split(/\r?\n/).pop();
+const packed = run('npm', ['pack', '--silent'], { stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32' }).trim().split(/\r?\n/).pop();
 const src = path.join(root, packed);
 const stable = path.join(root, 'contextbase.tgz');
 fs.copyFileSync(src, stable);
