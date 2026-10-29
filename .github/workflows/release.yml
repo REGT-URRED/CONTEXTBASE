@@ -1,0 +1,40 @@
+﻿name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.3.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run tests
+        run: node --test
+      - name: Build npm tarball
+        run: |
+          npm pack
+          TARBALL=$(ls ./*.tgz | head -n 1)
+          cp "$TARBALL" contextbase.tgz
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" contextbase.tgz --clobber
+          else
+            gh release create "$TAG" contextbase.tgz --title "$TAG" --generate-notes
+          fi

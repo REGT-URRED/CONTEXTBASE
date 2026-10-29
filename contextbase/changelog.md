@@ -5,6 +5,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-29] Full GitHub: workflows CI y Release con npm pack adjunto como contextbase.tgz
 - [2026-10-29] Mision de orquestacion/testing integrada: comando mission, MCP contextbase_mission, link global
 - [2026-10-29] v1.3.1: correccion del campo `author` en `package.json` (`U19211826.@utp.edu.pe` -> `U19211826@utp.edu.pe`) y normalizacion de identidades de commit con `.mailmap` (los commits de `cloud-assa` y `REGT (rafa)` ahora se resuelven como REGT-URRED)
 - [2026-10-29] v1.3.1: distribucion movida a GitHub Releases con asset de nombre estable `contextbase.tgz`; el paquete npm queda detenido en 1.2.0 por la suspension de la cuenta `datersx` y por no tener ownership sobre el nombre

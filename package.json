@@ -28,7 +28,9 @@
     "start": "node ./bin/contextbase.js",
     "test": "node --test",
     "audit": "node ./bin/contextbase.js audit",
-    "mcp": "node ./bin/contextbase.js mcp"
+    "mcp": "node ./bin/contextbase.js mcp",
+    "pack:release": "npm pack",
+    "test:ci": "node --test"
   },
   "keywords": [
     "contextbase",

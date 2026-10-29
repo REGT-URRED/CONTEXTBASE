@@ -5,6 +5,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] Full GitHub: workflows CI y Release con npm pack adjunto (contextbase.tgz)
 - [x] Mision de orquestacion/testing integrada (CLI mission + MCP contextbase_mission + link global)
 - [x] v1.3.1: campo `author` corregido en `package.json` y `.mailmap` agregado para normalizar autores de commit
 - [x] v1.3.1: release de GitHub con asset estable `contextbase.tgz` y README con la nueva via de instalacion
