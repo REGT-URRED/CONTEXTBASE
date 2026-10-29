@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { analyzeProject, packRepository } from './scanner.js';
 import { writeContextBase, syncFundamentos } from './generator.js';
@@ -60,7 +61,7 @@ function showHelp() {
   console.log(`  ${c.cyan}audit${c.reset}               Regenera el inventario de componentes y verifica brechas de seguridad (componentes.md).`);
   console.log(`  ${c.cyan}dump${c.reset}                  Vuelca el contenido completo de contextbase en pantalla.`);
   console.log(`  ${c.cyan}install-skill${c.reset}         Instala la Skill de ContextBase en el directorio global.`);
-  console.log(`  ${c.cyan}log${c.reset} <mensaje>         Registra un nuevo cambio en contextbase/changelog.md.`);
+  console.log(`  ${c.cyan}log${c.reset} <mensaje> [--scope=name|--worktree]  Registra cambio (global o namespaced por worktree).`);
   console.log(`  ${c.cyan}task add${c.reset} <descripción> Añade una nueva tarea pendiente [ ] a tasklist.md.`);
   console.log(`  ${c.cyan}task done${c.reset} <texto>      Marca una tarea como completada [x] en tasklist.md.`);
   console.log(`  ${c.cyan}task list${c.reset}             Lista todas las tareas actuales.\n`);
@@ -79,6 +80,7 @@ function showHelp() {
   console.log(`  ${c.cyan}snapshot${c.reset}             Crea punto de restauracion de archivos base.`);
   console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
   console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
+  console.log(`  ${c.cyan}swarm${c.reset}               Estado del swarm Strands (stub, no implementado).`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);
@@ -222,6 +224,8 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
     console.log(`\n${c.yellow}⚠ Falta contextbase/componentes.md. Generar con:${c.reset} ${c.green}contextbase audit${c.reset}`);
   }
 
+  console.log(`\n${c.bold}SWARM (STRANDS):${c.reset} interface stub, not implemented (ready=false).`);
+
   // Tareas
   if (fs.existsSync(tasklistPath)) {
     const content = fs.readFileSync(tasklistPath, 'utf8');
@@ -257,8 +261,11 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
 /**
  * Comando: contextbase task
  */
-export function runTask(action, taskText, targetDir = process.cwd()) {
-  const tasklistPath = path.join(targetDir, 'contextbase', 'tasklist.md');
+export function runTask(action, taskText, targetDir = process.cwd(), scope = null) {
+  const baseDir = scope ? path.join(targetDir, 'contextbase', sanitizeScope(scope)) : path.join(targetDir, 'contextbase');
+  if (scope) fs.mkdirSync(baseDir, { recursive: true });
+  const tasklistPath = path.join(baseDir, 'tasklist.md');
+  if (scope && !fs.existsSync(tasklistPath)) { fs.mkdirSync(baseDir, { recursive: true }); fs.writeFileSync(tasklistPath, '# Tasklist (' + sanitizeScope(scope) + ')\n\n## Tareas Completadas\n\n## Tareas Pendientes / En Progreso\n', 'utf8'); }
   if (!fs.existsSync(tasklistPath)) {
     console.log(`${c.red}Error: No existe contextbase/tasklist.md. Ejecuta 'contextbase init' primero.${c.reset}`);
     return;
@@ -332,13 +339,26 @@ export function runTask(action, taskText, targetDir = process.cwd()) {
 /**
  * Comando: contextbase log
  */
-export function runLog(logMessage, targetDir = process.cwd()) {
+function deriveScope(cwd) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, encoding: 'utf8', windowsHide: true }).trim();
+    if (out && out !== 'HEAD') return sanitizeScope(out);
+  } catch {}
+  return sanitizeScope(path.basename(path.resolve(cwd)));
+}
+
+function sanitizeScope(s) { return String(s || '').trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'default'; }
+
+export function runLog(logMessage, targetDir = process.cwd(), scope = null) {
   if (!logMessage) {
     console.log(`${c.yellow}Uso: contextbase log "<mensaje del cambio realizado>"${c.reset}`);
     return;
   }
 
-  const changelogPath = path.join(targetDir, 'contextbase', 'changelog.md');
+  const baseDir = scope ? path.join(targetDir, 'contextbase', sanitizeScope(scope)) : path.join(targetDir, 'contextbase');
+  if (scope) fs.mkdirSync(baseDir, { recursive: true });
+  const changelogPath = path.join(baseDir, 'changelog.md');
+  if (scope && !fs.existsSync(changelogPath)) { fs.mkdirSync(baseDir, { recursive: true }); fs.writeFileSync(changelogPath, '# Changelog (' + sanitizeScope(scope) + ')\n\n## Cambios Realizados\n', 'utf8'); }
   if (!fs.existsSync(changelogPath)) {
     console.log(`${c.red}Error: No existe contextbase/changelog.md. Ejecuta 'contextbase init' primero.${c.reset}`);
     return;
@@ -496,6 +516,7 @@ export async function cli(args = process.argv.slice(2)) {
     const clean = [];
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === '--intent') { intent = rest[++i] || ''; continue; }
+    if (rest[i] === '--json') { clean.push('--json'); continue; }
       clean.push(rest[i]);
     }
     if (clean[0] === 'prompts') { console.log(review.promptsText()); return; }
@@ -509,7 +530,9 @@ export async function cli(args = process.argv.slice(2)) {
       console.log(review.merge(reports));
       return;
     }
-    console.log(review.prepare(process.cwd(), { base: clean[0], intent }));
+    const jsonMode = clean.includes('--json');
+    const baseArg = clean.filter(x => x !== '--json')[0];
+    console.log(review.prepare(process.cwd(), { base: baseArg, intent, json: jsonMode }));
     return;
   }
 
@@ -574,16 +597,22 @@ export async function cli(args = process.argv.slice(2)) {
 
   if (command === 'log') {
     await ensureContextBase(process.cwd());
-    const msg = args.slice(1).join(' ');
-    runLog(msg, process.cwd());
+    const msg = args.filter(a => !a.startsWith('--')).slice(1).join(' ');
+    const scopeFlag = (args.find(a => a.startsWith('--scope=')) || '').replace('--scope=', '');
+    const autoScope = args.includes('--worktree') || args.includes('--auto-scope');
+    const scope = scopeFlag || (autoScope ? deriveScope(process.cwd()) : null);
+    runLog(msg, process.cwd(), scope);
     return;
   }
 
   if (command === 'task') {
     await ensureContextBase(process.cwd());
     const subAction = args[1] || 'list';
-    const text = args.slice(2).join(' ');
-    runTask(subAction, text, process.cwd());
+    const text = args.filter(a => !a.startsWith('--')).slice(2).join(' ');
+    const scopeFlag = (args.find(a => a.startsWith('--scope=')) || '').replace('--scope=', '');
+    const autoScope = args.includes('--worktree') || args.includes('--auto-scope');
+    const scope = scopeFlag || (autoScope ? deriveScope(process.cwd()) : null);
+    runTask(subAction, text, process.cwd(), scope);
     return;
   }
 

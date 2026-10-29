@@ -117,6 +117,10 @@ export function prepare(dir = process.cwd(), options = {}) {
     'Deben recibir identico contexto: diff, contenidos e intencion.',
   ].join('\n');
 
+  if (options && options.json) {
+    return JSON.stringify({ base, changedFiles: files, notes, stat, diff, contents, intent: (options.intent && String(options.intent).trim()) ? String(options.intent).trim() : null, prompts: p }, null, 2);
+  }
+
   return [
     head,
     '',

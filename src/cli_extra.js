@@ -14,6 +14,11 @@ const c = {
 
 export async function runExtra(command, args, cwd) {
   cwd = cwd || process.cwd();
+  if (command === 'swarm') {
+    console.log('Swarm (Strands): interface stub, not implemented (ready=false).');
+    console.log('Use git worktrees + subagents for parallel work; contextbase tracks memory/bitacora only.');
+    return true;
+  }
   if (command === 'bootstrap') {
     const cliArg = (args.find(a => a.startsWith('--cli=')) || '').replace('--cli=', '') || 'auto';
     const toolsArg = (args.find(a => a.startsWith('--tools=')) || '').replace('--tools=', '');
