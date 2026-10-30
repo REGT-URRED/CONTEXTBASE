@@ -112,8 +112,8 @@ export function buildDigest(state, ownVersion) {
   else if (state.guard.status === 'ok') lines.push('- OK');
   else lines.push('- Deriva: ' + (state.guard.drifts || []).map(d => d.file + ' (' + d.kind + ')').join(', '));
   lines.push('');
-  lines.push('## Swarm (Strands)');
-  lines.push('- Interface stub, not implemented (ready=false).');
+  lines.push('## Swarm');
+  lines.push('- Orquestacion real por worktrees. Ver: contextbase swarm status');
   lines.push('');
   lines.push('## Salud');
   const health = evaluateHealth(state, ownVersion);

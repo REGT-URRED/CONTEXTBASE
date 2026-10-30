@@ -80,7 +80,7 @@ function showHelp() {
   console.log(`  ${c.cyan}snapshot${c.reset}             Crea punto de restauracion de archivos base.`);
   console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
   console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
-  console.log(`  ${c.cyan}swarm${c.reset}               Estado del swarm Strands (stub, no implementado).`);
+  console.log(`  ${c.cyan}swarm${c.reset} start|status|send|collect|stop  Enjambre real: un worktree y una sesion por worker.`);
   console.log(`  ${c.cyan}mission${c.reset}             Prompt de mision: orquestacion, ejecucion resiliente y testing.`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
@@ -225,7 +225,7 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
     console.log(`\n${c.yellow}⚠ Falta contextbase/componentes.md. Generar con:${c.reset} ${c.green}contextbase audit${c.reset}`);
   }
 
-  console.log(`\n${c.bold}SWARM (STRANDS):${c.reset} interface stub, not implemented (ready=false).`);
+  console.log(`\n${c.bold}SWARM:${c.reset} orquestacion real por worktrees. Ver: ${c.cyan}contextbase swarm status${c.reset}`);
 
   // Tareas
   if (fs.existsSync(tasklistPath)) {
