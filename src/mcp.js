@@ -21,7 +21,12 @@ const TOOLS = [
   { name: 'contextbase_review', description: 'Review tipo thermos: modo prepare arma diff + contenidos + intencion + los 2 prompts de revisor; modo prompts devuelve solo prompts; modo merge fusiona dos reportes.', inputSchema: { type: 'object', properties: { mode: { type: 'string' }, base: { type: 'string' }, intent: { type: 'string' }, reports: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
   { name: 'contextbase_redundancy', description: 'Detecta redundancia en el entorno global: skills duplicados entre ubicaciones, referencias rotas en commands/agents, bloques de AGENTS.md y MCP duplicados.', inputSchema: { type: 'object', properties: { json: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } },
-  { name: 'contextbase_mission', description: 'Devuelve el prompt de mision de orquestacion y testing (Lead Orchestrator).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }
+  { name: 'contextbase_mission', description: 'Devuelve el prompt de mision de orquestacion y testing (Lead Orchestrator).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'contextbase_swarm_start', description: 'Lanza un enjambre: un worktree, una rama y una sesion por worker. Devuelve los session ids para el orquestador.', inputSchema: { type: 'object', properties: { task: { type: 'string' }, workers: { type: 'number' }, agent: { type: 'string' }, base: { type: 'string' }, ttl: { type: 'number' } }, required: ['task'], additionalProperties: false } },
+  { name: 'contextbase_swarm_status', description: 'Estado de los workers: running, done o stale, con cambios y evidencia de actividad.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_swarm_send', description: 'Envia un mensaje a un worker (o all). Entrega nativa en la sesion viva o por archivo.', inputSchema: { type: 'object', properties: { worker: { type: 'string' }, message: { type: 'string' }, run: { type: 'string' } }, required: ['message'], additionalProperties: false } },
+  { name: 'contextbase_swarm_collect', description: 'Reune result.md de cada worker y da veredicto de merge por rama (clean/conflict).', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_swarm_stop', description: 'Detiene los procesos de los workers vivos del run.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } }
 ];
 
 async function capture(fn) {
@@ -122,6 +127,29 @@ async function callTool(name, args = {}, projectDir) {
   if (name === 'contextbase_mission') {
     const mission = await import('./mission.js');
     return mission.missionText();
+  }
+  if (name === 'contextbase_swarm_start') {
+    const sw = await import('./swarm.js');
+    if (!args.task) throw new Error('Falta task');
+    const out = sw.startSwarm({ cwd: projectDir, task: args.task, workers: args.workers, agent: args.agent, base: args.base, ttlMinutes: args.ttl });
+    return JSON.stringify(out, null, 2);
+  }
+  if (name === 'contextbase_swarm_status') {
+    const sw = await import('./swarm.js');
+    return JSON.stringify(sw.swarmStatus({ cwd: projectDir, run: args.run }), null, 2);
+  }
+  if (name === 'contextbase_swarm_send') {
+    const sw = await import('./swarm.js');
+    if (!args.message) throw new Error('Falta message');
+    return JSON.stringify(sw.swarmSend({ cwd: projectDir, run: args.run, worker: args.worker, message: args.message }), null, 2);
+  }
+  if (name === 'contextbase_swarm_collect') {
+    const sw = await import('./swarm.js');
+    return JSON.stringify(sw.swarmCollect({ cwd: projectDir, run: args.run }), null, 2);
+  }
+  if (name === 'contextbase_swarm_stop') {
+    const sw = await import('./swarm.js');
+    return JSON.stringify(sw.swarmStop({ cwd: projectDir, run: args.run }), null, 2);
   }
   throw new Error('Tool desconocida: ' + name);
 }
