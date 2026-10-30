@@ -67,3 +67,16 @@ Cuando el usuario indique "instala esto", "inicializa memoria" o se trabaje en u
 ### Tools MCP
 
 El servidor expone 14 tools: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`.
+
+## Enjambre de agentes (swarm)
+
+Cuando el usuario pida trabajo en paralelo, varios agentes, o "enjambre":
+
+1. `contextbase swarm start --task "<objetivo>" --workers N` crea N worktrees, N ramas y N sesiones. Devuelve los session ids.
+2. Pasa los session ids al orquestador para que reparta tareas.
+3. `contextbase swarm status` para saber quien avanza, quien esta `stale` y quien termino.
+4. `contextbase swarm send --worker w1 --message "..."` para redirigir a un worker vivo.
+5. `contextbase swarm collect` para leer `result.md` y el veredicto de merge por rama.
+6. `contextbase swarm stop` al cerrar.
+
+El canal real es archivo, no pantalla: `task.md` de entrada, `result.md` y `status.json` de salida. Nunca parsees la salida de la terminal del worker.

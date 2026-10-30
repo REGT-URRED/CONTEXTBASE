@@ -122,13 +122,13 @@ contextbase/
 <!-- CONTEXTBASE:SYNC:START -->
 ## Contexto Técnico Sincronizado (auto)
 > Generado por `contextbase sync`. No editar dentro de este bloque: se reemplaza completo.
-- **Versión:** 1.3.0
+- **Versión:** 1.4.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (23), Markdown (9), JSON (2)
+- **Lenguajes dominantes:** JavaScript (50), Markdown (14), JSON (2)
 - **Dependencias:** Sin dependencias externas registradas.
-- **Scripts:** start, test, audit, mcp
-- **Directorios raíz:** .atl, bin, contextbase, skills, src, test
+- **Scripts:** start, test, audit, mcp, pack:release, test:ci, release:github
+- **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test
 <!-- CONTEXTBASE:SYNC:END -->
 
 ---

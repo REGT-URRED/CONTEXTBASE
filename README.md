@@ -227,3 +227,40 @@ Instalacion desde el release:
 ```bash
 npm install -g https://github.com/REGT-URRED/CONTEXTBASE/releases/latest/download/contextbase.tgz
 ```
+
+---
+
+## Enjambre de agentes (swarm)
+
+Orquestacion real por worktrees: cada worker recibe arbol propio, rama propia y sesion propia. El agente principal reparte tareas y lee resultados; la terminal es solo para mirar e intervenir.
+
+```bash
+contextbase swarm start --task "arreglar el fork multi-red" --workers 3
+contextbase swarm status
+contextbase swarm send --worker w1 --message "prioriza los tests de red"
+contextbase swarm collect
+contextbase swarm stop
+```
+
+Que crea cada worker:
+
+| Archivo | Quien escribe | Para que |
+|---|---|---|
+| `contextbase/swarm/<run>/<w>/task.md` | contextbase | La tarea y el criterio de salida |
+| `contextbase/swarm/<run>/<w>/result.md` | el worker | Que hizo, como lo verifico, que quedo pendiente |
+| `contextbase/swarm/<run>/<w>/status.json` | el worker | `done`, `blocked` o `failed` |
+| `contextbase/swarm/<run>/<w>/launch.cmd` | contextbase | Lanzador generado (sin texto del usuario) |
+| `contextbase/swarm/<run>/state.json` | contextbase | Sesiones, ramas, worktrees, pids |
+
+Reglas del modelo:
+
+- **La terminal es para el humano; el archivo es para la maquina.** Ningun orquestador parsea la pantalla.
+- `contextbase swarm send` intenta inyectar en la sesion viva (`delivered: native`). Si el agente no tiene contrato de sesion verificado, deja el mensaje en `inbox.md` (`delivered: file`).
+- `status` marca `stale` cuando un worker no dejo commits, cambios ni resultado dentro del ttl (10 min por defecto). Un worker mudo es el fallo tipico de un enjambre, no el crash.
+- `collect` da veredicto `clean`/`conflict` por rama con `git merge-tree`, sin tocar el arbol. No hace merge automatico.
+
+Limites actuales, sin adornos:
+
+- Solo `opencode` tiene contrato de sesion verificado. `claude` y `codex` quedan declarados como no soportados hasta verificarlos.
+- `--auto` (aprobacion automatica de permisos) no se pasa por defecto: el worker puede quedar esperando permiso en la TUI.
+- El estado del run vive en `contextbase/swarm/` (ignorado por git). La bitacora durable sigue siendo `changelog.md`.

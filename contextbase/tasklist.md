@@ -5,6 +5,10 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] Swarm real: worktree + rama + sesion por worker, status con stale, send/collect/stop
+- [x] Superficie CLI y 5 tools MCP de swarm
+- [ ] Verificar inyeccion en sesion con TUI abierta simultanea (spike pendiente)
+- [ ] Contrato de sesion para claude/codex cuando esten instalados
 - [x] Release 1.3.2: npm pack subido como contextbase.tgz a GitHub Releases
 - [x] Full GitHub: workflows CI y Release con npm pack adjunto (contextbase.tgz)
 - [x] Mision de orquestacion/testing integrada (CLI mission + MCP contextbase_mission + link global)

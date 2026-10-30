@@ -5,6 +5,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-10-30] Swarm real (fase 1-3): worktree+rama+sesion por worker, status con stale, send/collect/stop, CLI y 5 tools MCP
 - [2026-10-29] Fix release-github: npm pack en Windows requiere shell (EINVAL con Node 24); release v1.3.2 verificado
 - [2026-10-29] Release 1.3.2: empaquetado npm incluido como asset contextbase.tgz en GitHub Releases (sin Actions)
 - [2026-10-29] Full GitHub: workflows CI y Release con npm pack adjunto como contextbase.tgz
