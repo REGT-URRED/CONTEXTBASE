@@ -25,3 +25,11 @@ contextbase/snapshot/
 
 # External tool artifacts (gentle-ai skill registry)
 .atl/
+
+# Generated artifacts & local configuration
+contextbase/strands/
+contextbase/snapshot/
+contextbase/swarm/
+contextbase/*.lock
+.worktrees/
+kilo.json

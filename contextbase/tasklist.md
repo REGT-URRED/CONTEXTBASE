@@ -5,17 +5,32 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] Salida de Strands silenciosa por defecto (`CONTEXTBASE_VERBOSE=1` para diagnostico), sin NativeCommandError en PowerShell
+- [x] v1.4.0: version de exportacion derivada de package.json (OWN_VERSION) y conteo exacto de 24 tools en la prueba MCP
+- [x] v1.4.0: `kilo.json` con permisos aprobados de una sola vez y MCP `contextbase`
+- [x] v1.4.0: `refreshBaseline` actualiza la línea base tras la inyección legítima de reglas en `init`, `sync` y `silentInit`
+- [x] v1.4.0: documentación completa de funcionamiento en `docs/FUNCIONAMIENTO.md`
+- [x] Pruebas de tareas y Strands actualizadas al comportamiento automático
+- [x] Integración Strands Python: `contextbase/strands/` con `context.json`, `project_context.py`, `strands_config.py`, `tasks.py`, `strands_runner.py` y `README.md`
+- [x] `strands_runner.py` listo para Strands con escalado solo por critical/high o deriva del guardia
+- [x] Automatización autónoma en `src/auto.js` (`autoEnsure`, `refreshStrands`, `refreshComponents`, `silentInit`)
+- [x] `init`, `log`, `task`, `sync` y `audit` regeneran el contexto Strands sin comandos nuevos
+- [x] MCP completo: `contextbase_export`, `contextbase_strands_prepare`, `contextbase_init` y `contextbase_hook`
+- [x] Exportación JSON/HTML (`src/export.js` y `contextbase export`)
+- [x] Fix `guard repair source`
+- [x] Fix `parseSecurity`
+- [x] Baseline limpiado y conflicto de changelog resuelto
+- [x] Pruebas MCP actualizadas al total de tools vigente
 - [x] Swarm real: worktree + rama + sesion por worker, status con stale, send/collect/stop
 - [x] Superficie CLI y 5 tools MCP de swarm
-- [ ] Verificar inyeccion en sesion con TUI abierta simultanea (spike pendiente)
-- [ ] Contrato de sesion para claude/codex cuando esten instalados
 - [x] Release 1.3.2: npm pack subido como contextbase.tgz a GitHub Releases
 - [x] Full GitHub: workflows CI y Release con npm pack adjunto (contextbase.tgz)
 - [x] Mision de orquestacion/testing integrada (CLI mission + MCP contextbase_mission + link global)
 - [x] v1.3.1: campo `author` corregido en `package.json` y `.mailmap` agregado para normalizar autores de commit
 - [x] v1.3.1: release de GitHub con asset estable `contextbase.tgz` y README con la nueva via de instalacion
 - [x] npm descartado como canal de distribucion (cuenta `datersx` suspendida, nombre del paquete fuera de nuestro control)
-- [x] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
+- [x] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
+
 
 - [x] Creación de carpeta de memoria persistente `contextbase/`
 - [x] Generación de documento estructurado `fundamentos.md`
@@ -59,12 +74,15 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Skill global sincronizada en `~/.config/opencode` y `~/.gemini`
 - [x] Exportaciones namespaced en `src/index.js`
 - [x] `.atl/` agregado a `.gitignore`
+- [x] Exportacion namespace exp agregada en src/index.js
 - [x] `bin/contextbase.js` con bit ejecutable `100755`
 ---
 
 ## Tareas Pendientes / En Progreso
 
-- [ ] Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere)
+- [ ] Verificar `strands_runner.py` con el SDK de Strands instalado
+- [ ] Definir y verificar el contrato de sesión para `claude` y `codex` en swarm
+- [ ] Verificar la inyección en sesión con TUI abierta simultánea (spike pendiente)
 - [ ] Publicar en npm (`npm login` pendiente en esta máquina)
 
 ---

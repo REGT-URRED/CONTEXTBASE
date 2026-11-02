@@ -58,6 +58,33 @@ function readBaselineFile(cwd) {
   return null;
 }
 
+export function refreshBaseline(cwd, files) {
+  const root = path.resolve(cwd);
+  const file = path.join(root, 'contextbase', 'baseline.json');
+  const list = Array.isArray(files) && files.length > 0
+    ? files.map(f => String(f).replace(/\\/g, '/'))
+    : loadGuarded(root);
+  const b = readBaselineFile(root) || { files: {}, created: new Date().toISOString() };
+  if (!b.files) b.files = {};
+  let changed = false;
+  for (const rel of list) {
+    const full = path.join(root, rel);
+    const hash = hashFile(full);
+    if (hash === null) continue;
+    const mtime = fileMtimeIso(full);
+    const prev = b.files[rel];
+    if (!prev || prev.hash !== hash || prev.mtime !== mtime) {
+      b.files[rel] = { hash, mtime };
+      changed = true;
+    }
+  }
+  if (changed) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    writeAtomic(file, JSON.stringify(b, null, 2));
+  }
+  return changed;
+}
+
 export function baseline(cwd) {
   const file = path.join(cwd, 'contextbase', 'baseline.json');
   let b = readBaselineFile(cwd);

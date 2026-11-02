@@ -13,13 +13,16 @@ import { installGitHook } from './hooks.js';
 import { runExtra } from './cli_extra.js';
 import { detectCli } from './detect.js';
 import { getRegistry, setEnabled } from './registry.js';
-import { check as guardCheck, repair as guardRepair, REPAIR_ALLOWLIST } from './guard.js';
+import { check as guardCheck, repair as guardRepair, refreshBaseline, REPAIR_ALLOWLIST } from './guard.js';
 import * as snapshot from './snapshot.js';
 import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bootstrapRun } from './bootstrap.js';
 import { startMcpServer } from './mcp.js';
 import * as review from './review.js';
 import * as redundancy from './redundancy.js';
 import * as slop from './slop.js';
+import * as exp from './export.js';
+import { autoEnsure, refreshStrands } from './auto.js';
+import { prepareStrandsContext } from './strands.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -74,6 +77,7 @@ function showHelp() {
   console.log(`  ${c.cyan}review merge${c.reset} <a.md> <b.md>      Fusiona exactamente dos reportes y marca coincidencias.`);
   console.log(`  ${c.cyan}redundancy${c.reset} [--json]             Detecta skills principales y duplicados, referencias rotas y MCP repetidos.`);
   console.log(`  ${c.cyan}slop${c.reset} [base] [--json]            Delivery gate antislop sobre el arbol de trabajo contra <base> (base inferida si se omite).`);
+  console.log(`  ${c.cyan}export${c.reset} <estado|digest> [json|html] [archivo]  Exporta estado o digest en JSON/HTML.`);
   console.log(`  ${c.cyan}status --json${c.reset}         Estado estructurado para agentes y CI.`);
   console.log(`  ${c.cyan}bootstrap${c.reset}            Bootstrap del entorno de agentes (detecta/instala/init/snapshot).`);
   console.log(`  ${c.cyan}guard${c.reset}                Verifica integridad de archivos base y repara.`);
@@ -93,6 +97,7 @@ function showHelp() {
   console.log(`  contextbase task add "Implementar tests unitarios para scanner"`);
   console.log(`  contextbase task done "scanner"`);
   console.log(`  contextbase pack\n`);
+  console.log(`  contextbase export estado json reporte.json`);
 }
 
 /**
@@ -103,7 +108,7 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   console.log(`${c.bold}Iniciando implementación secuencial de ContextBase en:${c.reset} ${c.dim}${targetDir}${c.reset}\n`);
 
   // Paso 1: Creación de directorio
-  console.log(`${c.cyan}[1/5] Creación de Directorio:${c.reset} Verificando carpeta 'contextbase/'...`);
+  console.log(`${c.cyan}[1/6] Creación de Directorio:${c.reset} Verificando carpeta 'contextbase/'...`);
   const contextDir = path.join(targetDir, 'contextbase');
   if (!fs.existsSync(contextDir)) {
     fs.mkdirSync(contextDir, { recursive: true });
@@ -113,7 +118,7 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   }
 
   // Paso 2: Análisis y escaneo profundo (estilo Repomix)
-  console.log(`\n${c.cyan}[2/5] Análisis y Escaneo Profundo:${c.reset} Leyendo archivos, dependencias y commits...`);
+  console.log(`\n${c.cyan}[2/6] Análisis y Escaneo Profundo:${c.reset} Leyendo archivos, dependencias y commits...`);
   const analysis = analyzeProject(targetDir);
   console.log(`      ${c.green}✓ Proyecto detectado:${c.reset} ${analysis.metadata.name} (${analysis.metadata.type})`);
   console.log(`      ${c.green}✓ Archivos analizados:${c.reset} ${analysis.files.length} archivos relevantes`);
@@ -125,7 +130,7 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   }
 
   // Paso 3: Generación de documentos
-  console.log(`\n${c.cyan}[3/5] Generación y Poblado de Documentos:${c.reset}`);
+  console.log(`\n${c.cyan}[3/6] Generación y Poblado de Documentos:${c.reset}`);
   const result = writeContextBase(targetDir, analysis, { force: options.force });
   for (const f of result.filesWritten) {
     console.log(`      ${c.green}✓ Generado:${c.reset} ${f}`);
@@ -135,7 +140,7 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   }
 
   // Paso 3.5: Mantenimiento preventivo automático
-  console.log(`\n${c.magenta}[3.5/5] Mantenimiento Preventivo:${c.reset} Componentes, versiones y brechas de seguridad...`);
+  console.log(`\n${c.magenta}[3.5/6] Mantenimiento Preventivo:${c.reset} Componentes, versiones y brechas de seguridad...`);
   try {
     const maint = runMaintenance(targetDir);
     const depsCount = maint.inventory.reduce((acc, row) => acc + row.deps.length, 0);
@@ -145,14 +150,15 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   }
 
   // Paso 4: Inyección de reglas para agentes de código
-  console.log(`\n${c.cyan}[4/5] Inyección de Directivas para Agentes de Código:${c.reset}`);
+  console.log(`\n${c.cyan}[4/6] Inyección de Directivas para Agentes de Código:${c.reset}`);
   const rulesUpdated = injectAgentRules(targetDir);
   for (const r of rulesUpdated) {
     console.log(`      ${c.green}✓ Regla de actualización obligatoria inyectada en:${c.reset} ${r}`);
   }
+  try { refreshBaseline(targetDir); } catch {}
 
   // Paso 5: Instalación global de la skill para agentes
-  console.log(`\n${c.cyan}[5/5] Disponibilidad Universal de Skill:${c.reset}`);
+  console.log(`\n${c.cyan}[5/6] Disponibilidad Universal de Skill:${c.reset}`);
   try {
     const installed = installSkill('global');
     for (const inst of installed) {
@@ -160,6 +166,13 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
     }
   } catch (e) {
     console.log(`      ${c.gray}Nota: No se pudo instalar la skill global (${e.message})${c.reset}`);
+  }
+
+  try {
+    const strandsResult = prepareStrandsContext(targetDir);
+    console.log(`\n[6/6] Contexto Strands (Python): generado en contextbase/strands/ (${strandsResult.files.length} archivos)`);
+  } catch (e) {
+    console.log(`\n${c.gray}Nota: contexto Strands omitido (${e.message})${c.reset}`);
   }
 
   // Empaquetado opcional
@@ -288,6 +301,7 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
     }
     withLock(tasklistPath, () => writeAtomic(tasklistPath, content));
     console.log(`${c.green}✓ Tarea agregada con éxito:${c.reset} ${taskText}`);
+    try { refreshStrands(targetDir); } catch {}
   } else if (action === 'done') {
     if (!taskText) {
       console.log(`${c.yellow}Uso: contextbase task done "<texto o parte de la tarea>"${c.reset}`);
@@ -318,6 +332,7 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
         newContent = `${compHeader}\n${completedLine}\n\n${newContent}`;
       }
       withLock(tasklistPath, () => writeAtomic(tasklistPath, newContent));
+      try { refreshStrands(targetDir); } catch {}
     } else {
       console.log(`${c.yellow}No se encontró ninguna tarea pendiente que coincida con:${c.reset} "${taskText}"`);
     }
@@ -385,6 +400,7 @@ export function runLog(logMessage, targetDir = process.cwd(), scope = null) {
   if (result.rotated.length > 0) {
     console.log(`${c.gray}  (${result.rotated.length} entradas antiguas rotadas a changelog-${new Date().toISOString().slice(0, 4)}.md)${c.reset}`);
   }
+  try { refreshStrands(targetDir); } catch {}
 }
 
 /**
@@ -441,6 +457,7 @@ export async function ensureContextBase(targetDir = process.cwd(), silent = fals
     await runInit(targetDir, { force: false });
     return true;
   }
+  try { autoEnsure(targetDir); } catch {}
   return false;
 }
 
@@ -495,12 +512,14 @@ export async function cli(args = process.argv.slice(2)) {
     const analysis = analyzeProject(process.cwd());
     const updated = syncFundamentos(process.cwd(), analysis);
     const rules = injectAgentRules(process.cwd());
+    try { refreshBaseline(process.cwd()); } catch {}
     if (updated) console.log(`${c.green}✓ Bloque técnico sincronizado en:${c.reset} contextbase/fundamentos.md`);
     console.log(`${c.green}✓ Reglas de agente reinyectadas en:${c.reset} ${rules.join(', ')}`);
     const st = collectState(process.cwd());
     if (!st.files['componentes.md'].exists || st.files['componentes.md'].days > 7) {
       console.log(`${c.yellow}⚠ Informe de componentes pendiente. Ejecutar:${c.reset} contextbase audit`);
     }
+    try { refreshStrands(process.cwd()); } catch {}
     console.log('');
     return;
   }
@@ -551,6 +570,20 @@ export async function cli(args = process.argv.slice(2)) {
     return;
   }
 
+
+  if (command === 'export') {
+    const type = args[1] || 'estado';
+    const format = args[2] && !args[2].startsWith('--') ? args[2] : 'json';
+    const output = args[3] && !args[3].startsWith('--') ? args[3] : undefined;
+    const result = exp.exportCommand(process.cwd(), { type: type === 'digest' ? 'digest' : 'state', format, output });
+    if (output) {
+      console.log(`${c.green}✓ Exportado en:${c.reset} ${result.written} (${result.mimeType})`);
+    } else {
+      console.log(result.content);
+    }
+    return;
+  }
+
   if (command === 'mcp') {
     await startMcpServer(process.cwd());
     return;
@@ -581,6 +614,7 @@ export async function cli(args = process.argv.slice(2)) {
     } catch (e) {
       console.log(`${c.red}Error en mantenimiento preventivo: ${e.message}${c.reset}\n`);
     }
+    try { refreshStrands(process.cwd()); } catch {}
     return;
   }
 

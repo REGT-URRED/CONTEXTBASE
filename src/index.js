@@ -12,3 +12,8 @@ export { startMcpServer } from './mcp.js';
 export * as review from './review.js';
 export * as redundancy from './redundancy.js';
 export * as slop from './slop.js';
+export * as exp from './export.js';
+export * as strands from './strands.js';
+
+
+

@@ -1,10 +1,13 @@
 import readline from 'node:readline';
 import fs from 'node:fs';
+import { autoEnsure, refreshStrands } from './auto.js';
 
 const pkg = (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')); } catch { return {}; } })();
 
 const PROTOCOL = '2024-11-05';
 const SERVER = { name: 'contextbase', version: pkg.version || '0.0.0' };
+
+const MUTATING_TOOLS = new Set(['contextbase_log', 'contextbase_task', 'contextbase_audit', 'contextbase_sync', 'contextbase_restore', 'contextbase_guard', 'contextbase_strands_prepare']);
 
 const TOOLS = [
   { name: 'contextbase_status', description: 'Estado estructurado de la memoria del proyecto: archivos, tareas, seguridad y salud.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -21,6 +24,10 @@ const TOOLS = [
   { name: 'contextbase_review', description: 'Review tipo thermos: modo prepare arma diff + contenidos + intencion + los 2 prompts de revisor; modo prompts devuelve solo prompts; modo merge fusiona dos reportes.', inputSchema: { type: 'object', properties: { mode: { type: 'string' }, base: { type: 'string' }, intent: { type: 'string' }, reports: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
   { name: 'contextbase_redundancy', description: 'Detecta redundancia en el entorno global: skills duplicados entre ubicaciones, referencias rotas en commands/agents, bloques de AGENTS.md y MCP duplicados.', inputSchema: { type: 'object', properties: { json: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'contextbase_export', description: 'Exporta el estado o digest del proyecto en formato JSON o HTML.', inputSchema: { type: 'object', properties: { type: { type: 'string', description: 'estado o digest' }, format: { type: 'string', description: 'json o html' }, output: { type: 'string', description: 'ruta de archivo de salida opcional' } }, additionalProperties: false } },
+  { name: 'contextbase_strands_prepare', description: 'Prepara el contexto del proyecto para Strands Agent (Python): genera contextbase/strands/ con project_context.py, strands_config.py, tasks.py y context.json.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'contextbase_init', description: 'Garantiza la memoria ContextBase del proyecto (inicializa sin intervención si falta).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'contextbase_hook', description: 'Instala o quita el hook post-commit de autoguardado. action install|remove.', inputSchema: { type: 'object', properties: { action: { type: 'string' } }, additionalProperties: false } },
   { name: 'contextbase_mission', description: 'Devuelve el prompt de mision de orquestacion y testing (Lead Orchestrator).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'contextbase_swarm_start', description: 'Lanza un enjambre: un worktree, una rama y una sesion por worker. Devuelve los session ids para el orquestador.', inputSchema: { type: 'object', properties: { task: { type: 'string' }, workers: { type: 'number' }, agent: { type: 'string' }, base: { type: 'string' }, ttl: { type: 'number' } }, required: ['task'], additionalProperties: false } },
   { name: 'contextbase_swarm_status', description: 'Estado de los workers: running, done o stale, con cambios y evidencia de actividad.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
@@ -75,7 +82,7 @@ async function callTool(name, args = {}, projectDir) {
     if (args && args.repair && Array.isArray(checkRes.drifts)) {
       for (const d of checkRes.drifts) {
         if (guard.REPAIR_ALLOWLIST && guard.REPAIR_ALLOWLIST[d.file]) {
-          const r = await guard.repair(projectDir, d.file);
+          const r = await guard.repair(projectDir, d.file, guard.REPAIR_ALLOWLIST[d.file]);
           repairs.push({ file: d.file, ok: !!r.ok, error: r.error || null });
         }
       }
@@ -115,6 +122,28 @@ async function callTool(name, args = {}, projectDir) {
     const sp = await import('./slop.js');
     const r = sp.scan(projectDir, { base: args && args.base });
     return (args && args.json) ? JSON.stringify(r, null, 2) : sp.render(r);
+  }
+  if (name === 'contextbase_export') {
+    const exp = await import('./export.js');
+    const type = (args && args.type) || 'estado';
+    const format = (args && args.format) || 'json';
+    const output = args && args.output;
+    const result = exp.exportCommand(projectDir, { type: type === 'digest' ? 'digest' : 'state', format, output });
+    return JSON.stringify(result, null, 2);
+  }
+  if (name === 'contextbase_strands_prepare') {
+    const strands = await import('./strands.js');
+    const result = strands.prepareStrandsContext(projectDir);
+    return JSON.stringify(result, null, 2);
+  }
+  if (name === 'contextbase_init') {
+    const r = autoEnsure(projectDir);
+    return JSON.stringify(r, null, 2);
+  }
+  if (name === 'contextbase_hook') {
+    const hooks = await import('./hooks.js');
+    const r = hooks.installGitHook(projectDir, (args && args.action) || 'install');
+    return JSON.stringify(r, null, 2);
   }
   if (name === 'contextbase_tools') {
     const reg = await import('./registry.js');
@@ -161,6 +190,7 @@ function reply(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
  * Permite que cualquier agente compatible MCP use ContextBase como tools nativas.
  */
 export async function startMcpServer(projectDir = process.cwd()) {
+  try { autoEnsure(projectDir); } catch {}
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   rl.on('line', async line => {
     const text = line.trim();
@@ -171,7 +201,7 @@ export async function startMcpServer(projectDir = process.cwd()) {
     if (method === 'notifications/initialized' || id === undefined) return;
     try {
       if (method === 'initialize') {
-        return reply({ jsonrpc: '2.0', id, result: { protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: SERVER } });
+        return reply({ jsonrpc: '2.0', id, result: { protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: SERVER, instructions: 'Usa contextbase_context al iniciar cada sesión y contextbase_strands_prepare para trabajo autónomo con Strands. La memoria se mantiene automáticamente; no requiere comandos manuales.' } });
       }
       if (method === 'ping') return reply({ jsonrpc: '2.0', id, result: {} });
       if (method === 'tools/list') return reply({ jsonrpc: '2.0', id, result: { tools: TOOLS } });
@@ -179,7 +209,9 @@ export async function startMcpServer(projectDir = process.cwd()) {
         const name = params?.name;
         const args = params?.arguments || {};
         try {
+          try { autoEnsure(projectDir); } catch {}
           const out = await callTool(name, args, projectDir);
+          if (MUTATING_TOOLS.has(name)) { try { refreshStrands(projectDir); } catch {} }
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: String(out) }] } });
         } catch (e) {
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true } });
@@ -192,3 +224,7 @@ export async function startMcpServer(projectDir = process.cwd()) {
   });
   await new Promise(resolve => rl.on('close', resolve));
 }
+
+
+
+

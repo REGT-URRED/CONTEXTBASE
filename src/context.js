@@ -29,9 +29,9 @@ function parseTasks(text) {
 function parseSecurity(text) {
   const out = { critical: 0, high: 0, parsed: false };
   if (!text) return out;
-  const crit = text.match(/critical:\s*(\d+)/i);
-  const high = text.match(/high:\s*(\d+)/i);
-  if (crit || high || /sin vulnerabilidades/i.test(text) || /total\s+0\b/i.test(text)) out.parsed = true;
+  const crit = text.match(/-?\s*critical\s*:\s*(\d+)/i);
+  const high = text.match(/-?\s*high\s*:\s*(\d+)/i);
+  if (crit || high || /sin vulnerabilidades/i.test(text) || /total\s+0/i.test(text)) out.parsed = true;
   out.critical = crit ? Number(crit[1]) : 0;
   out.high = high ? Number(high[1]) : 0;
   return out;

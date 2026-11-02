@@ -28,17 +28,19 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 
 ## 3. Arquitectura y Contexto Técnico General
 - **Nombre:** `contextbase`
-- **Versión:** `1.3.0`
+- **Versión:** `1.4.0`
 - **Ecosistema:** Node.js (ESM puro, >= 18.0.0)
 - **Dependencias Externas:** 0 (Zero-Dependencies)
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
 - **Motor de Escaneo:** Analizador estático y empaquetador Repomix integrado en `src/scanner.js`
 - **Mantenimiento Preventivo:** Inventario de componentes, frescura y brechas en `src/maintenance.js`; informe en `contextbase/componentes.md`; comando `contextbase audit`
+- **Configuración de agentes:** `kilo.json` declara permisos aprobados y el servidor MCP local `contextbase` (`node bin/contextbase.js mcp`).
 
 ### Módulos Principales del Sistema:
 - `bin/contextbase.js`: Punto de entrada ejecutable CLI.
 - `src/index.js`: Exportaciones de la API programática.
 - `src/cli.js`: Enrutador de comandos, interfaz ANSI y acciones interactivas.
+- `src/auto.js`: Automatización silenciosa: inicialización, refresco de componentes y sincronización del contexto Strands.
 - `src/scanner.js`: Escáner de sistema de archivos, detector de stacks/commits/TODOs y motor Repomix.
 - `src/generator.js`: Generador de `fundamentos.md`, `changelog.md` y `tasklist.md`.
 - `src/rules.js`: Inyector universal de reglas de agente (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.).
@@ -52,16 +54,18 @@ Este sistema resuelve de manera definitiva la pérdida de contexto y continuidad
 - `src/bootstrap.js`: Recomendación y ejecución del arranque de un proyecto (`preview`, `run`).
 - `src/cli_extra.js`: Subcomandos extendidos del CLI que no viven en el enrutador principal.
 - `src/detect.js`: Detección de CLIs instalados, binarios en `PATH` y configuración MCP.
-- `src/guard.js`: Protección de archivos sensibles con línea base, hash y escaneo de cambios sospechosos.
+- `src/export.js`: Exportación del estado o digest en JSON y HTML.
+- `src/guard.js`: Protección de archivos sensibles con línea base, hash, escaneo de cambios sospechosos y refresco controlado de la línea base (`refreshBaseline`).
 - `src/registry.js`: Registro de herramientas del proyecto y su estado habilitado.
 - `src/redundancy.js`: Detección de redundancia global (skills duplicados, referencias rotas, bloques `AGENTS.md` y MCP repetidos).
 - `src/review.js`: Revisión tipo thermos: diff, contenidos, prompts de revisor y fusión de reportes.
 - `src/slop.js`: Delivery gate antislop sobre el árbol de trabajo, con reglas de prosa y código por separado.
 - `src/snapshot.js`: Creación, listado, poda y restauración de snapshots del registro.
-- `src/strands.js`: Preparación de objetivos tipo Strands (fase 1: solo interfaz, sin ejecución).
+- `src/strands.js`: Contexto Python para Strands (`contextbase/strands/`), configuración, tareas y `strands_runner.py` con escalado humano.
 - `src/prompts/`: Prompts de revisor `review-security.md` y `review-quality.md`.
 - `test/`: Suite de pruebas con el runner nativo `node:test` (sin dependencias).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
+- `docs/FUNCIONAMIENTO.md`: Documentación funcional completa del flujo automático, archivos, MCP, Strands, swarm y escalado al humano.
 
 ---
 
@@ -74,19 +78,28 @@ contextbase/
 │   ├── fundamentos.md
 │   ├── changelog.md
 │   ├── tasklist.md
-│   └── componentes.md
+│   ├── componentes.md
+│   └── strands/
+│       ├── context.json
+│       ├── project_context.py
+│       ├── strands_config.py
+│       ├── tasks.py
+│       ├── strands_runner.py
+│       └── README.md
 ├── docs/
 │   └── 2026-10-27-contextbase-base-tool-design.md
 ├── skills/
 │   └── contextbase/
 │       └── SKILL.md
 ├── src/
+│   ├── auto.js
 │   ├── bootstrap.js
 │   ├── changelog.js
 │   ├── cli.js
 │   ├── cli_extra.js
 │   ├── context.js
 │   ├── detect.js
+│   ├── export.js
 │   ├── fsutil.js
 │   ├── generator.js
 │   ├── guard.js
@@ -125,7 +138,7 @@ contextbase/
 - **Versión:** 1.4.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (50), Markdown (14), JSON (2)
+- **Lenguajes dominantes:** JavaScript (52), Markdown (16), JSON (4), Python (4)
 - **Dependencias:** Sin dependencias externas registradas.
 - **Scripts:** start, test, audit, mcp, pack:release, test:ci, release:github
 - **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test

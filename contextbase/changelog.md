@@ -5,6 +5,22 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-11-02] Release v1.4.0: autonomia total, Strands Python, MCP completo (24 tools), export JSON/HTML y baseline autorreparable
+- [2026-11-02] Ajuste: salida de Strands silenciosa por defecto (CONTEXTBASE_VERBOSE=1 para diagnostico)
+- [2026-11-02] v1.4.0: version de exportacion derivada de package.json (OWN_VERSION) y conteo exacto de 24 tools en la prueba MCP
+- [2026-11-02] Instalacion global v1.4.0: binarios contextbase, cb y openwiki enlazados; contexto Strands regenerado
+- [2026-11-02] v1.4.0: MCP completo con contextbase_export, contextbase_strands_prepare, contextbase_init y contextbase_hook; instrucciones de autonomia en initialize
+- [2026-11-02] v1.4.0: contexto Strands autonomo (project_context.py, strands_config.py, tasks.py, strands_runner.py) regenerado tras log/task/audit/sync y al iniciar MCP
+- [2026-11-02] v1.4.0: kilo.json con permisos unicos y MCP contextbase; baseline se refresca tras inyeccion legitima de reglas; documentacion de funcionamiento en docs/FUNCIONAMIENTO.md
+- [2026-11-02] Pruebas actualizadas: MCP verifica >=23 tools y los nombres nuevos; `tasks.test.js` acepta los artefactos Strands automáticos; `strands.test.js` cubre la API de fase 2 y el runner.
+- [2026-11-02] Integración Strands Python completa: `src/strands.js` genera `contextbase/strands/{context.json,project_context.py,strands_config.py,tasks.py,strands_runner.py,README.md}`; `strands_runner.py` escala al humano solo por vulnerabilidades critical/high o deriva del guardia.
+- [2026-11-02] Automatización autónoma: nuevo `src/auto.js` con `autoEnsure`, `refreshStrands`, `refreshComponents` y `silentInit`; `init`, `log`, `task`, `audit` y el arranque MCP refrescan la memoria y el contexto sin comandos manuales.
+- [2026-11-02] MCP completo: nuevas tools `contextbase_strands_prepare`, `contextbase_init` y `contextbase_hook`, sumadas a `contextbase_export`; `initialize` devuelve instrucciones de uso y el servidor inicializa la memoria al arrancar.
+- [2026-11-02] Exportación JSON/HTML estable en `src/export.js` y comando `contextbase export` para estado o digest.
+- [2026-11-02] Fix `guard repair source`: la reparación usa la fuente oficial y evita sobrescribir archivos con contenido derivado.
+- [2026-11-02] Fix `parseSecurity`: el parser tolera variantes del informe de componentes y cuenta critical/high sin falsos negativos.
+- [2026-11-02] Baseline limpiado y conflicto de changelog resuelto: entradas duplicadas consolidadas y línea base regenerada.
+- [2026-11-02] Agregada exportacion namespace exp en src/index.js
 - [2026-10-30] Swarm real (fase 1-3): worktree+rama+sesion por worker, status con stale, send/collect/stop, CLI y 5 tools MCP
 - [2026-10-29] Fix release-github: npm pack en Windows requiere shell (EINVAL con Node 24); release v1.3.2 verificado
 - [2026-10-29] Release 1.3.2: empaquetado npm incluido como asset contextbase.tgz en GitHub Releases (sin Actions)
@@ -51,18 +67,15 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 - [2026-10-07] Creación de interfaz CLI con banner ANSI, subcomandos de gestión de tareas (`task add`, `task done`, `task list`), bitácora (`log`), volcado (`dump`) y empaquetado (`pack`).
 - [2026-10-07] Vinculación global mediante `npm link` con ejecutables `contextbase`, `cb` y alias `openwiki`.
 - [2026-10-07] Redacción de documentación técnica completa en español en `README.md`.
-<<<<<<< HEAD
-=======
->>>>>>> 797e66c (feat: address real-world feedback (swarm status, scoped log/task, review --json))
-
 
 ---
 
 ## Cambios por Hacer
 
-- Agregar soporte para exportación en formatos adicionales (ej. JSON/HTML si se requiere).
-- Incorporar pruebas unitarias automáticas con el runner nativo `node:test`.
-- Publicar en registro npm público (nombre `contextbase` disponible; requiere `npm login`, la máquina no tiene sesión).
+- Verificar `strands_runner.py` con el SDK de Strands instalado y documentar la versión compatible.
+- Definir y verificar el contrato de sesión para `claude` y `codex` en swarm.
+- Verificar la inyección en sesión con TUI abierta simultánea (spike pendiente).
+- Publicar en el registro npm público (requiere `npm login`).
 
 ---
 *Nota: Registrar siempre cada nueva tarea completada en "Cambios Realizados" y actualizar los ítems pendientes en "Cambios por Hacer".*

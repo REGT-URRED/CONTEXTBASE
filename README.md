@@ -59,6 +59,7 @@ contextbase context
 4. Genera `componentes.md`: inventario, frescura de versiones y brechas de seguridad.
 5. Inyecta las reglas en `AGENTS.md`, `CLAUDE.md`, `.cursorrules` y `.windsurfrules`.
 6. Instala la Skill global para agentes compatibles.
+7. Genera `contextbase/strands/` con el contexto Python para Strands.
 
 Opciones: `--force` regenera los documentos existentes; `--pack` añade `contextbase-pack.txt`.
 
@@ -72,8 +73,9 @@ Opciones: `--force` regenera los documentos existentes; `--pack` añade `context
 | `contextbase/changelog.md` | Bitácora con `## Cambios Realizados` (historial Git real) y `## Cambios por Hacer`. Rota a `changelog-YYYY.md` al superar 500 entradas. |
 | `contextbase/tasklist.md` | Tareas con `[x]` completadas y `[ ]` pendientes. |
 | `contextbase/componentes.md` | Versiones instaladas, última modificación de cada manifiesto, desactualizaciones y vulnerabilidades conocidas. |
+| `contextbase/strands/` | Contexto Python para Strands: variables, configuración, tareas, runner y JSON de estado. Se regenera automáticamente. |
 
-Los cuatro documentos se mantienen en **español**; el código y la API en inglés.
+Los documentos de memoria se mantienen en **español**; el código y la API en inglés.
 
 ---
 
@@ -99,7 +101,13 @@ Cualquier cliente compatible MCP puede usar ContextBase como tools, sin shell ni
 }
 ```
 
-Tools expuestas: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`.
+Tools expuestas: `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`, `contextbase_export`, `contextbase_mission`, `contextbase_swarm_start`, `contextbase_swarm_status`, `contextbase_swarm_send`, `contextbase_swarm_collect`, `contextbase_swarm_stop`, `contextbase_strands_prepare`, `contextbase_init`, `contextbase_hook`.
+
+### Trabajo autónomo (Strands)
+
+`contextbase/strands/` se regenera solo después de `log`, `task`, `audit` y `sync`, y también al iniciar el servidor MCP. Contiene `context.json`, `project_context.py`, `strands_config.py`, `tasks.py`, `strands_runner.py` y `README.md`.
+
+`strands_runner.py` arma el prompt en español y escala al humano solo cuando hay vulnerabilidades critical/high o deriva detectada por el guardia (salida 2). Sin SDK de Strands instalado muestra el prompt en modo seco (salida 0). No existe un comando `strands` manual: el contexto se mantiene automáticamente.
 
 ---
 
@@ -189,6 +197,9 @@ src/slop.js             delivery gate antislop sobre líneas agregadas
 src/prompts/review-security.md prompt de revisor de seguridad y correctitud
 src/prompts/review-quality.md  prompt de revisor de calidad y mantenibilidad
 src/installer.js        Skill global
+src/auto.js             automatización silenciosa de memoria y contexto Strands
+src/export.js           exportación JSON/HTML
+src/strands.js          contexto Python y runner para Strands
 skills/contextbase/     definición de la Skill
 ```
 
