@@ -9,6 +9,7 @@ import { appendEntry } from './changelog.js';
 import { writeAtomic, withLock } from './fsutil.js';
 import { refreshBaseline } from './guard.js';
 import { prepareStrandsContext } from './strands.js';
+import { autoFinalizeSpiderWorktree, autoPulseWeb } from './web.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,6 +192,14 @@ export function syncWorkspaceChanges(projectDir = process.cwd(), explicitFiles =
     strandsUpdated = true;
   } catch {}
 
+  try {
+    autoFinalizeSpiderWorktree(root, uniqueFiles, options.deps);
+  } catch {}
+
+  try {
+    autoPulseWeb(root, options.deps);
+  } catch {}
+
   return {
     synced: true,
     files: uniqueFiles,
@@ -260,6 +269,7 @@ export function startWatcher(projectDir = process.cwd(), options = {}) {
     pollTimer = setInterval(() => {
       const changed = detectWorkingTreeChanges(root);
       for (const f of changed) schedule(f);
+      try { autoPulseWeb(root); } catch {}
     }, fallbackInterval);
     if (options.unref !== false && typeof pollTimer.unref === 'function') {
       pollTimer.unref();
@@ -270,6 +280,7 @@ export function startWatcher(projectDir = process.cwd(), options = {}) {
     pollTimer = setInterval(() => {
       const changed = detectWorkingTreeChanges(root);
       for (const f of changed) schedule(f);
+      try { autoPulseWeb(root); } catch {}
     }, pollMs);
     if (options.unref !== false && typeof pollTimer.unref === 'function') {
       pollTimer.unref();

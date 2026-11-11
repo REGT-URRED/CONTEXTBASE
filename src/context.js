@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { check as guardCheck } from './guard.js';
+import { latestRun, readState } from './swarm.js';
 
 export const RULE_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules', '.windsurfrules', '.gemini/rules/contextbase.md', '.agents/rules/contextbase.md'];
 
@@ -50,6 +51,24 @@ function ruleVersions(projectDir) {
   return { present, versions: outdated };
 }
 
+function collectWebSummary(projectDir) {
+  try {
+    const run = latestRun(projectDir);
+    if (!run) return null;
+    const st = readState(projectDir, run);
+    if (!st) return null;
+    return {
+      run: st.run,
+      prey: st.prey || st.task,
+      spiders: Array.isArray(st.workers) ? st.workers.length : 0,
+      flowState: st.flowState || 'EN_ZONA',
+      savingsPct: st.tokenEconomy ? st.tokenEconomy.savingsPct : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function collectState(projectDir) {
   const contextDir = path.join(projectDir, 'contextbase');
   const read = f => { try { return fs.readFileSync(path.join(contextDir, f), 'utf8'); } catch { return ''; } };
@@ -65,6 +84,7 @@ export function collectState(projectDir) {
     tasks: parseTasks(taskText),
     security: { ...parseSecurity(componentesText), informe: files['componentes.md'].exists ? files['componentes.md'].days : null },
     rules: ruleVersions(projectDir),
+    web: collectWebSummary(projectDir),
     guard: (() => { try { const r = guardCheck(projectDir); return { status: r.status, drifts: (r.drifts || []).map(d => ({ file: d.file, kind: d.kind })) }; } catch { return { status: 'unknown', drifts: [] }; } })()
   };
 }
@@ -89,7 +109,7 @@ export function buildDigest(state, ownVersion) {
   const date = new Date().toISOString().slice(0, 10);
   const lines = [];
   lines.push('# ContextBase :: ' + state.project);
-  lines.push('Fecha: ' + date + ' | version CLI: ' + ownVersion);
+  lines.push('Fecha: ' + date + ' | version CLI: ' + ownVersion + ' | Filosofia: "No es la IA, es quien controla a la IA"');
   lines.push('');
   lines.push('## Tareas pendientes (' + state.tasks.pending.length + ')');
   if (state.tasks.pending.length === 0) lines.push('- Sin pendientes registradas.');
@@ -112,8 +132,12 @@ export function buildDigest(state, ownVersion) {
   else if (state.guard.status === 'ok') lines.push('- OK');
   else lines.push('- Deriva: ' + (state.guard.drifts || []).map(d => d.file + ' (' + d.kind + ')').join(', '));
   lines.push('');
-  lines.push('## Swarm');
-  lines.push('- Orquestacion real por worktrees. Ver: contextbase swarm status');
+  lines.push('## Telaraña y Enjambre (Web / Swarm)');
+  if (state.web) {
+    lines.push(`- Run activo: ${state.web.run} | Flujo: ${state.web.flowState} | Arañas: ${state.web.spiders} | Ahorro tokens: ${state.web.savingsPct ?? 80}%`);
+  } else {
+    lines.push('- Orquestacion aislada por worktrees y Árbitro Automático (PASS/REFIX/RERUN/FAIL). Ver: contextbase web flow');
+  }
   lines.push('');
   lines.push('## Salud');
   const health = evaluateHealth(state, ownVersion);

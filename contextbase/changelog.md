@@ -5,6 +5,10 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-11-11] [qa] Remediación completa tras auditoría de QA en vivo (Happy/Unhappy/Hipotético): fix del colgado de `node --test` (timeout 120 s/30 s en runAgent/git, propagación de deps, guard NODE_TEST_CONTEXT y unref del timer MCP); contrato no-pisado de configuración (backup .bak-contextbase, fusión quirúrgica JSONC con precedencia jsonc: global Kilo/OpenCode y proyecto); convención de exit codes 0/1/2 (subcomando/flag inválido->2, ejecución->1); `snapshot list` cableado (ya no crea snapshots) y `snapshot restore` enruta a restore; `export` valida tipo/formato e interpreta flags; MCP resources/read devuelve -32602 con JSON corrupto (nunca contenido corrupto); `log` sanea multilínea; `slop` excluye archivos generados por contextbase; `web ... --json` responde JSON ({empty:true} sin runs, exit 0); contador único de tareas compartido; nuevo módulo `src/terminals.js` + comando `terminals list|close|send` (identifica terminales de agente abiertas para el proyecto, close es dry-run con --yes y nunca cierra el árbol propio, send por contrato nativo opencode run --session); módulos nuevos `src/env.js` y `src/jsonc.js`; suite 81->112 casos, termina sola en ~13 s
+- [2026-11-11] Incorporado Adaptador Universal Multi-Agente (src/universal-agents.js para 13+ agentes y registro custom en contextbase/agents.json) y Motor de Gobernanza Soberana (src/control.js con compilador de intención humana, Índice de Control Soberano 0-100 y autopiloto de bucle cerrado)
+- [2026-11-11] Implementada arquitectura completa de Red de Agentes en Telaraña (src/web.js + src/swarm.js), descomposición de Presa en hilos disjuntos, hidratación de worktrees, 3 subagentes secuenciales por terminal (subagents.json), Economía de Tokens, Árbitro Automático (PASS/REFIX/RERUN/FAIL), Zona de Flujo (flow.md y metrics.json) y auto-reparación de plugins en OpenCode/Kilo Code
+- [2026-11-11] [auto] Sincronización automática de archivos modificados: src/autoconfig.js
 - [2026-11-11] Release v1.5.0: automatización integral cero-intervención para OpenCode, Kilo Code, Claude Code, Cursor y Windsurf (`src/autoconfig.js`, `src/watcher.js`, plugins `contextbase-auto.js`, hooks de ciclo de vida, MCP resources/prompts con cola FIFO y `postinstall` global)
 - [2026-11-02] Release v1.4.0: autonomia total, Strands Python, MCP completo (24 tools), export JSON/HTML y baseline autorreparable
 - [2026-11-02] Ajuste: salida de Strands silenciosa por defecto (CONTEXTBASE_VERBOSE=1 para diagnostico)
@@ -72,6 +76,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios por Hacer
+- Tool MCP `contextbase_terminals` y soporte `send` para agentes sin contrato ses_ (Kilo/Claude): inyección de teclas en TUI queda fuera por diseño
 
 - Verificar `strands_runner.py` con el SDK de Strands instalado y documentar la versión compatible.
 - Definir y verificar el contrato de sesión para `claude` y `codex` en swarm.

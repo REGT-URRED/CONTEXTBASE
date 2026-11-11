@@ -19,8 +19,9 @@ import * as slop from './slop.js';
 import * as exp from './export.js';
 import { autoEnsure, refreshStrands } from './auto.js';
 import { prepareStrandsContext } from './strands.js';
-import { autoConfigureProject, autoConfigureGlobal } from './autoconfig.js';
+import { autoConfigureProject, autoConfigureGlobal, reportConfigError } from './autoconfig.js';
 import { startWatcher, startDaemonWatcher, stopDaemonWatcher, statusDaemonWatcher, syncWorkspaceChanges } from './watcher.js';
+import { PHILOSOPHY } from './web.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -41,7 +42,8 @@ function banner() {
   const vPad = `CONTEXTBASE (v${version})`;
   console.log(`\n${c.cyan}${c.bold}╔════════════════════════════════════════════════════════════════╗`);
   console.log(`║                   ${vPad.padEnd(44, ' ')}║`);
-  console.log(`║   Memoria Técnica Persistente Minimalista para Agentes de IA   ║`);
+  console.log(`║   Memoria Técnica Persistente y Telaraña Autónoma de Agentes   ║`);
+  console.log(`║          "${PHILOSOPHY}"           ║`);
   console.log(`╚════════════════════════════════════════════════════════════════╝${c.reset}\n`);
 }
 
@@ -56,8 +58,9 @@ function showHelp() {
   console.log(`${c.bold}COMANDOS PRINCIPALES:${c.reset}`);
   console.log(`  ${c.cyan}init${c.reset}                  Inicializa contextbase y autoconfigura todos los agentes.`);
   console.log(`  ${c.cyan}auto${c.reset} | ${c.cyan}setup${c.reset}          Configura ejecución 100% automática (MCP, plugins, permisos, hooks).`);
-  console.log(`  ${c.cyan}watch${c.reset} [start|stop|status] Observador en segundo plano que sincroniza cambios en tiempo real.`);
-  console.log(`  ${c.cyan}status${c.reset} | ${c.cyan}check${c.reset}        Muestra el estado visual de la memoria y tareas.`);
+  console.log(`  ${c.cyan}watch${c.reset} [start|stop|status] Observador en segundo plano que sincroniza y arbitra en tiempo real.`);
+  console.log(`  ${c.cyan}web${c.reset} | ${c.cyan}telarana${c.reset} | ${c.cyan}swarm${c.reset}  Red de Agentes en Telaraña (start|arbitrate|flow|metrics|weave|status|send|collect|stop).`);
+  console.log(`  ${c.cyan}status${c.reset} | ${c.cyan}check${c.reset}        Muestra el estado visual de la memoria, tareas y Telaraña.`);
   console.log(`  ${c.cyan}pack${c.reset} [archivo]        Empaqueta el código fuente estilo Repomix en un solo archivo.`);
   console.log(`  ${c.cyan}audit${c.reset}               Regenera el inventario de componentes y verifica brechas de seguridad (componentes.md).`);
   console.log(`  ${c.cyan}dump${c.reset}                  Vuelca el contenido completo de contextbase en pantalla.`);
@@ -82,7 +85,6 @@ function showHelp() {
   console.log(`  ${c.cyan}snapshot${c.reset}             Crea punto de restauracion de archivos base.`);
   console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
   console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
-  console.log(`  ${c.cyan}swarm${c.reset} start|status|send|collect|stop  Enjambre real: un worktree y una sesion por worker.`);
   console.log(`  ${c.cyan}mission${c.reset}             Prompt de mision: orquestacion, ejecucion resiliente y testing.`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
@@ -239,14 +241,17 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
     console.log(`\n${c.yellow}⚠ Falta contextbase/componentes.md. Generar con:${c.reset} ${c.green}contextbase audit${c.reset}`);
   }
 
-  console.log(`\n${c.bold}SWARM:${c.reset} orquestacion real por worktrees. Ver: ${c.cyan}contextbase swarm status${c.reset}`);
+  if (state.web) {
+    console.log(`\n${c.bold}TELARAÑA ACTIVA (${state.web.run}):${c.reset} Flujo ${c.cyan}${state.web.flowState}${c.reset} | Arañas: ${state.web.spiders} | Ahorro tokens: ${state.web.savingsPct ?? 80}%`);
+  } else {
+    console.log(`\n${c.bold}TELARAÑA / SWARM:${c.reset} orquestación aislada por worktrees y Árbitro Automático. Ver: ${c.cyan}contextbase web flow${c.reset}`);
+  }
 
-  if (fs.existsSync(tasklistPath)) {
-    const content = fs.readFileSync(tasklistPath, 'utf8');
-    const doneCount = (content.match(/\[x\]/gi) || []).length;
-    const pendingCount = (content.match(/\[ \]/g) || []).length;
-    const total = doneCount + pendingCount;
-    const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  if (state.tasks) {
+    const doneCount = state.tasks.done.length;
+    const pendingCount = state.tasks.pending.length;
+    const total = state.tasks.total;
+    const pct = state.tasks.pct;
 
     console.log(`\n${c.bold}PROGRESO DE TAREAS:${c.reset}`);
     console.log(`  ${c.green}✓ Completadas:${c.reset} ${doneCount}`);
@@ -290,6 +295,7 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
   if (action === 'add') {
     if (!taskText) {
       console.log(`${c.yellow}Uso: contextbase task add "<descripción de la tarea>"${c.reset}`);
+      process.exitCode = 2;
       return;
     }
     const targetHeader = '## Tareas Pendientes / En Progreso';
@@ -305,6 +311,7 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
   } else if (action === 'done') {
     if (!taskText) {
       console.log(`${c.yellow}Uso: contextbase task done "<texto o parte de la tarea>"${c.reset}`);
+      process.exitCode = 2;
       return;
     }
     const lines = content.split('\n');
@@ -368,6 +375,7 @@ function sanitizeScope(s) { return String(s || '').trim().replace(/[^a-zA-Z0-9_-
 export function runLog(logMessage, targetDir = process.cwd(), scope = null) {
   if (!logMessage) {
     console.log(`${c.yellow}Uso: contextbase log "<mensaje del cambio realizado>"${c.reset}`);
+    process.exitCode = 2;
     return;
   }
 
@@ -380,8 +388,9 @@ export function runLog(logMessage, targetDir = process.cwd(), scope = null) {
     return;
   }
 
+  const cleanMessage = String(logMessage).replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim();
   const dateStr = new Date().toISOString().split('T')[0];
-  const newEntry = `- [${dateStr}] ${logMessage.trim()}`;
+  const newEntry = `- [${dateStr}] ${cleanMessage}`;
   const limit = 500;
   const result = withLock(changelogPath, () => {
     const current = fs.readFileSync(changelogPath, 'utf8');
@@ -501,20 +510,27 @@ export async function cli(args = process.argv.slice(2)) {
     const globalOnly = args.includes('--global');
     const isJson = args.includes('--json');
 
+    const autoFailures = [];
     let globalFiles = [];
     try {
       globalFiles = installSkill('global', process.cwd());
-      globalFiles.push(...autoConfigureGlobal({ forceGlobal: globalOnly }));
-    } catch {}
+      const g = autoConfigureGlobal({ forceGlobal: globalOnly });
+      globalFiles.push(...g.files);
+      autoFailures.push(...g.failures);
+    } catch (err) {
+      autoFailures.push(reportConfigError('CONFIG_WRITE_FAILED', 'auto|setup', err.message));
+    }
 
     if (globalOnly) {
-      if (isJson) console.log(JSON.stringify({ ok: true, globalFiles }, null, 2));
+      if (autoFailures.length) process.exitCode = 1;
+      if (isJson) console.log(JSON.stringify({ ok: autoFailures.length === 0, failures: autoFailures, globalFiles }, null, 2));
       else if (!silent) console.log(`${c.green}✓ Entorno global autoconfigurado (${globalFiles.length} rutas).${c.reset}`);
       return;
     }
 
     const ensured = autoEnsure(process.cwd(), { autoConfig: true, installSkill: true });
     const projCfg = autoConfigureProject(process.cwd(), { includeAll: args.includes('--all') });
+    autoFailures.push(...(projCfg.failures || []));
     const wsSync = syncWorkspaceChanges(process.cwd());
 
     if (args.includes('--daemon') || args.includes('--watch')) {
@@ -523,7 +539,7 @@ export async function cli(args = process.argv.slice(2)) {
     }
 
     if (isJson) {
-      console.log(JSON.stringify({ ok: true, ensured, configured: projCfg.files, synced: wsSync, globalFiles }, null, 2));
+      console.log(JSON.stringify({ ok: autoFailures.length === 0, failures: autoFailures, ensured, configured: projCfg.files, synced: wsSync, globalFiles }, null, 2));
     } else if (!silent) {
       banner();
       console.log(`${c.green}✓ Automatización completa activada en:${c.reset} ${process.cwd()}`);
@@ -531,6 +547,11 @@ export async function cli(args = process.argv.slice(2)) {
       console.log(`  - Skills y plugins globales sincronizados: ${globalFiles.length}`);
       if (ensured.daemon) console.log(`  - Watcher en segundo plano activo (PID: ${ensured.daemon.pid})`);
       console.log('');
+    }
+    if (autoFailures.length) {
+      console.error('\x1b[31m⚠ Configuración incompleta (' + autoFailures.length + ' fallo(s)):\x1b[0m');
+      for (const f of autoFailures) { console.error('  - [' + (f.code || 'CONFIG') + '] ' + (f.message || '') + (f.file ? ' (' + f.file + ')' : '')); }
+      process.exitCode = 1;
     }
     return;
   }
@@ -552,7 +573,7 @@ export async function cli(args = process.argv.slice(2)) {
     if (sub === 'foreground' || args.includes('--foreground')) {
       const watcher = startWatcher(process.cwd(), { unref: false, pollMs: 3000 });
       if (!args.includes('--silent')) {
-        console.log(`${c.cyan}👁 ContextBase Watcher activo en ${process.cwd()} (Ctrl+C para detener)...${c.reset}`);
+        console.log(`${c.cyan}👁 ContextBase Watcher + Árbitro activo en ${process.cwd()} (Ctrl+C para detener)...${c.reset}`);
       }
       process.on('SIGINT', () => { watcher.close(); process.exit(0); });
       process.on('SIGTERM', () => { watcher.close(); process.exit(0); });
@@ -650,10 +671,34 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'export') {
-    const type = args[1] || 'estado';
-    const format = args[2] && !args[2].startsWith('--') ? args[2] : 'json';
-    const output = args[3] && !args[3].startsWith('--') ? args[3] : undefined;
-    const result = exp.exportCommand(process.cwd(), { type: type === 'digest' ? 'digest' : 'state', format, output });
+    const rest = args.slice(1);
+    const flagMap = {};
+    const positionals = [];
+    for (const a of rest) {
+      const s = String(a);
+      if (s.startsWith('--')) {
+        const eq = s.indexOf('=');
+        const key = eq > 0 ? s.slice(2, eq) : s.slice(2);
+        const val = eq > 0 ? s.slice(eq + 1) : true;
+        flagMap[key] = val;
+      } else positionals.push(s);
+    }
+    const pick = (v) => (typeof v === 'string' && v ? v : undefined);
+    const type = pick(flagMap.tipo) || pick(flagMap.type) || positionals[0] || 'estado';
+    const format = pick(flagMap.formato) || pick(flagMap.fmt)
+      || (flagMap.json ? 'json' : flagMap.html ? 'html' : positionals[1] || 'json');
+    const output = pick(flagMap.output) || pick(flagMap.out) || positionals[2];
+    if (!['estado', 'digest'].includes(String(type))) {
+      console.error(`${c.red}Error: tipo no soportado: ${type} (usa "estado" o "digest")${c.reset}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!['json', 'html'].includes(String(format))) {
+      console.error(`${c.red}Error: formato no soportado: ${format} (usa "json" o "html")${c.reset}`);
+      process.exitCode = 1;
+      return;
+    }
+    const result = exp.exportCommand(process.cwd(), { type: String(type) === 'digest' ? 'digest' : 'state', format: String(format), output });
     if (output) {
       console.log(`${c.green}✓ Exportado en:${c.reset} ${result.written} (${result.mimeType})`);
     } else {
@@ -732,5 +777,6 @@ export async function cli(args = process.argv.slice(2)) {
   if (await runExtra(command, args, process.cwd())) return;
 
   console.log(`${c.red}Comando no reconocido: ${command}${c.reset}\n`);
+  process.exitCode = 2;
   showHelp();
 }

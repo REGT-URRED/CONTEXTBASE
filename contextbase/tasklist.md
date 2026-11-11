@@ -5,6 +5,12 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] QA en vivo completa y remediación: suite 112/112 en verde, termina sola en ~13 s
+- [x] Fix del colgado de `node --test`: timeouts en agente/git, deps propagadas, guard NODE_TEST_CONTEXT
+- [x] Contrato no-pisado de config global/proyecto (backup .bak-contextbase, fusión JSONC quirúrgica con precedencia .jsonc)
+- [x] Convención de exit codes 0/1/2 en toda la CLI (+ tests qa-hardening y terminals)
+- [x] `snapshot list` y `snapshot restore` cableados en el CLI; `export` validado; MCP -32602 con JSON corrupto; `slop` excluye archivos generados
+- [x] Nuevo comando `terminals list|close|send` (src/terminals.js) para identificar y gestionar terminales de agente abiertas del proyecto
 - [x] v1.5.0: Autoconfiguración real de agentes (`src/autoconfig.js`) para OpenCode (`opencode.json`), Kilo Code (`kilo.json`), Claude Code (`.mcp.json` y `.claude/settings.json`), Cursor y Windsurf con permisos `contextbase_*` preaprobados
 - [x] v1.5.0: Plugin nativo automático `contextbase-auto.js` (`.opencode/plugins/` y `.kilo/plugins/`) con inyección de digest en `experimental.chat.system.transform`, captura de ediciones en `tool.execute.after` (incluyendo `todowrite`) y cierre automático en `session.idle`
 - [x] v1.5.0: Observador en tiempo real y demonio en segundo plano (`src/watcher.js`, `contextbase watch`) que sincroniza `fundamentos.md`, `changelog.md`, `tasklist.md`, `componentes.md` y `strands/`
@@ -81,6 +87,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Pendientes / En Progreso
+- [ ] Tool MCP `contextbase_terminals` y soporte send de agentes sin contrato ses_ (no se inyectan teclas en TUI)
 
 - [ ] Verificar `strands_runner.py` con el SDK de Strands instalado
 - [ ] Definir y verificar el contrato de sesión para `claude` y `codex` en swarm

@@ -7,8 +7,9 @@ import { injectAgentRules, CONTEXTBASE_VERSION } from './rules.js';
 import { refreshBaseline } from './guard.js';
 import { installSkill } from './installer.js';
 import { prepareStrandsContext } from './strands.js';
-import { autoConfigureProject, ensureGitExclude } from './autoconfig.js';
+import { autoConfigureProject, ensureGitExclude, hasStaleAgentConfig } from './autoconfig.js';
 import { installGitHook } from './hooks.js';
+import { autoPulseWeb } from './web.js';
 
 const BASE_FILES = ['fundamentos.md', 'changelog.md', 'tasklist.md'];
 const STRANDS_CONTEXT = path.join('contextbase', 'strands', 'context.json');
@@ -148,7 +149,8 @@ export function autoEnsure(projectDir, options = {}) {
     strandsRefreshed: false,
     rulesRefreshed: false,
     agentsConfigured: false,
-    gitHookInstalled: false
+    gitHookInstalled: false,
+    webPulsed: false
   };
   try {
     const contextDir = path.join(root, 'contextbase');
@@ -164,10 +166,7 @@ export function autoEnsure(projectDir, options = {}) {
     summary.strandsRefreshed = refreshStrands(root);
 
     if (!isTestEnv() || options.autoConfig) {
-      const needConfig = !fs.existsSync(path.join(root, 'kilo.json')) ||
-                         !fs.existsSync(path.join(root, 'opencode.json')) ||
-                         !fs.existsSync(path.join(root, '.opencode', 'plugins', 'contextbase-auto.js')) ||
-                         Boolean(options.autoConfig);
+      const needConfig = hasStaleAgentConfig(root) || Boolean(options.autoConfig);
       if (needConfig) {
         autoConfigureProject(root, options);
         summary.agentsConfigured = true;
@@ -177,6 +176,11 @@ export function autoEnsure(projectDir, options = {}) {
         summary.gitHookInstalled = Boolean(hk && hk.ok);
       }
     }
+
+    try {
+      const pulsed = autoPulseWeb(root, options.deps);
+      summary.webPulsed = Boolean(pulsed);
+    } catch {}
   } catch {}
   return summary;
 }

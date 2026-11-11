@@ -30,10 +30,18 @@ test('servidor MCP responde initialize, tools/list, resources/list, prompts/list
   send({ jsonrpc: '2.0', id: 5, method: 'resources/read', params: { uri: 'contextbase://digest' } });
   send({ jsonrpc: '2.0', id: 6, method: 'prompts/list' });
   child.stdin.end();
+  let timer = null;
   await new Promise((resolve, reject) => {
-    child.on('close', resolve);
-    child.on('error', reject);
-    setTimeout(() => reject(new Error('timeout MCP')), 15000);
+    timer = setTimeout(() => reject(new Error('timeout MCP')), 15000);
+    if (typeof timer.unref === 'function') timer.unref();
+    child.on('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
   assert.equal(responses.length, 6);
   assert.equal(responses[0].result.protocolVersion, '2024-11-05');

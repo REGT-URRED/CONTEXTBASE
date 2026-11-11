@@ -72,7 +72,7 @@ test('ensureGitExclude registra rutas sin tocar .gitignore', () => {
 test('autoConfigureGlobal configura directorio home aislado y plugin valido', () => {
   const home = tmp('cb-home-');
   const configured = autoConfigureGlobal({ homeDir: home, forceGlobal: true });
-  assert.ok(configured.some(f => f.includes('contextbase-auto.js')));
+  assert.ok(configured.files.some(f => f.includes('contextbase-auto.js')));
   const src = buildOpenCodePluginSource();
   assert.ok(src.includes('experimental.chat.system.transform'));
   assert.ok(src.includes('tool.execute.after'));

@@ -83,7 +83,7 @@ function discoverSkillRoots() {
 }
 
 // Quita comentarios solo fuera de strings: un regex global se comeria "https://" y romperia el JSON.
-function stripComments(raw) {
+export function stripComments(raw) {
   let out = '';
   let i = 0;
   while (i < raw.length) {

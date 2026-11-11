@@ -1,65 +1,53 @@
 ---
 name: contextbase
-description: Sistema universal y minimalista de memoria persistente técnica automática, bitácora y lista de tareas para agentes de código (OpenCode, Kilo Code, Claude Code, Cursor, Windsurf, Antigravity, etc.).
+description: Sistema universal y autónomo de memoria técnica persistente, Red de Agentes en Telaraña (web/swarm) con Árbitro Automático (PASS/REFIX/RERUN/FAIL) y Economía de Tokens para OpenCode, Kilo Code, Claude Code, Cursor y Windsurf.
 ---
 
-# ContextBase: Memoria Técnica Persistente y Bitácora Automática
+# ContextBase: Memoria Técnica Persistente y Red de Agentes en Telaraña
 
-ContextBase mantiene la continuidad técnica, el contexto persistente y la trazabilidad entre sesiones de trabajo para agentes de código y desarrolladores sin requerir ejecución manual.
+> **Filosofía Central:** *"No es la IA, es quien controla a la IA"*
+
+ContextBase mantiene la continuidad técnica, el contexto persistente y la orquestación paralela de agentes en una **Telaraña (`web` / `telarana` / `swarm`)** sin requerir ejecución manual.
 
 ## Activación Automática Cero-Intervención
 ContextBase opera de manera 100% automática en OpenCode, Kilo Code, Claude Code, Cursor y otros entornos:
 
-1. **Al instalar globalmente (`postinstall` o `contextbase auto`):**
-   - Registra automáticamente el servidor MCP `contextbase`, los permisos preaprobados (`contextbase_*`) y el plugin de ciclo de vida (`contextbase-auto.js`) en los directorios globales y del proyecto.
+1. **Auto-reparación y configuración automática (`postinstall`, `autoEnsure`, `contextbase auto`):**
+   - Registra y repara automáticamente el servidor MCP `contextbase`, los permisos preaprobados (`contextbase_*`) y el plugin de ciclo de vida (`contextbase-auto.js`) en `.opencode/plugins/`, `.opencode/plugin/`, `.kilo/plugins/`, `.kilo/plugin/`, `.kilocode/`, `opencode.json`, `kilo.json` y `.mcp.json`.
+   - El plugin resuelve dinámicamente el binario de `contextbase` aunque el proyecto se mueva de carpeta o se ejecute dentro de un worktree `.worktrees/swarm-*`.
 2. **Al iniciar cualquier sesión en OpenCode, Kilo o Claude Code:**
-   - Si `contextbase/` no existe en el proyecto, `autoEnsure` lo inicializa de inmediato sin pedir confirmación.
-   - El plugin nativo (`.opencode/plugins/contextbase-auto.js` / `.kilo/plugins/contextbase-auto.js`), el hook `SessionStart` (`.claude/settings.json`) y la respuesta `initialize` de MCP inyectan el digest vivo del proyecto directamente en el contexto del modelo.
+   - Si `contextbase/` no existe, `autoEnsure` lo inicializa de inmediato sin pedir confirmación.
+   - Si la sesión corre dentro del worktree de una Araña (`.worktrees/swarm-<run>-w<i>`), inyecta automáticamente su misión (`task.md`), su hilo disjunto de archivos (`assignedFiles`), sus 3 subagentes secuenciales (`subagents.json`) y las órdenes de autocorrección (`refix.md`).
 3. **Durante y al finalizar cada turno:**
-   - El observador en segundo plano (`watcher.js`) y los hooks `tool.execute.after` / `session.idle` / `Stop` detectan los archivos modificados, sincronizan `fundamentos.md`, registran la actividad en `changelog.md`, extraen nuevos `TODO`/`FIXME` hacia `tasklist.md` y regeneran `contextbase/strands/`.
+   - En los worktrees de Arañas, el plugin bloquea ediciones sobre archivos asignados a otras Arañas (`forbiddenFiles`) para que ningún hilo rompa la telaraña, auto-sintetiza `result.md` y `status.json` al cerrar sesión si faltaban, y dispara el **Árbitro Automático** en la raíz del proyecto.
 
 ---
 
-## Protocolo Automático Obligatorio para Agentes
-> Toda corrección, mejora, alteración o nueva implementación en el código debe incluir, como paso final y obligatorio, la actualización de los registros dentro de `contextbase/`:
->
-> 1. **`contextbase/changelog.md`:** Registrar la entrada bajo `## Cambios Realizados` (`contextbase_log`) y actualizar `## Cambios por Hacer`.
-> 2. **`contextbase/tasklist.md`:** Marcar con `[x]` las tareas completadas (`contextbase_task` con `action="done"`) y registrar con `[ ]` las pendientes (`action="add"`).
-> 3. **`contextbase/fundamentos.md`:** Sincronizar con `contextbase_sync` si se modificó la arquitectura o dependencias.
-> 4. **Idioma:** Toda la documentación debe mantenerse estrictamente en **español**.
-> 5. **Mantenimiento preventivo:** Revisar y regenerar `contextbase/componentes.md` con `contextbase_audit` o `contextbase audit` al iniciar sesión y al cerrar cambios de dependencias.
+## Arquitectura de la Telaraña y Control Automático (`src/web.js` + `src/swarm.js`)
 
----
+1. **La Presa (`--prey` / `--task`):**
+   - Escribes tu objetivo en lenguaje humano (`contextbase web start --prey "..." --spiders 3`) y `decomposePrey` lo divide automáticamente en segmentos y reparte los archivos del proyecto en hilos disjuntos (`assignedFiles`) para evitar que dos Arañas toquen el mismo archivo.
+2. **Las Arañas e Hilos Aislados (worktrees):**
+   - Cada terminal abre una Araña (`OpenCode` o `Kilo Code`) en su propio `.worktrees/swarm-<run>-w<i>` y rama `swarm/<run>/w<i>`, con `contextbase/` pre-hidratado (`hydrateWorktreeMemory`) y plugins activos.
+3. **Subagentes Secuenciales por Terminal (`subagents.json`):**
+   - Cada Araña ejecuta una cadena estricta de 3 subagentes secuenciales sin anidar subagentes recursivos:
+     1. **Explorador de Hilo (25% tokens):** Lee solo `contextbase/` y sus archivos asignados.
+     2. **Constructor Focalizado (50% tokens):** Implementa el cambio exclusivamente en su worktree e hilo.
+     3. **Verificador y Árbitro Local (25% tokens):** Valida pruebas, pasa `antislop` y escribe `result.md` y `status.json`.
+4. **Economía de Tokens (Modelos Básicos → Avanzados):**
+   - `calculateTokenEconomy` mide los tokens del repositorio completo frente al micro-contexto entregado a cada hilo, logrando ahorros del 70% al 95% de tokens.
+5. **Árbitro Automático (`arbitrate` / `judge`):**
+   - `contextbase web arbitrate` (o vía MCP con `arbitrate: true`) evalúa cada Araña sobre 100 puntos (`result.md`, `status.json`, `0` hallazgos en `slop`, aislamiento de hilo y `git merge-tree` limpio) y aplica sin intervención manual:
+     - **PASS**: Hilo aprobado y listo para tejer.
+     - **REFIX**: Escribe `refix.md` con los defectos exactos y re-inyecta la orden a la Araña.
+     - **RERUN**: Relanza Arañas en `stale` o bloqueadas.
+     - **FAIL**: Corta bucles tras 2 intentos y escala a `ATENCION_HUMANA`.
+6. **Zona Final del Programador (`flow.md` y `metrics.json`):**
+   - Todo queda organizado y espejado en `contextbase/web/<run>/` y `contextbase/swarm/<run>/` con el estado de flujo (`EN_ZONA`, `AUTOCORRIGIENDO` o `ATENCION_HUMANA`).
 
-## Comandos CLI de Soporte
-- `contextbase auto` / `contextbase setup`: Configura automáticamente OpenCode, Kilo, Claude, Cursor, plugins, permisos y hooks en el proyecto o globalmente (`--global`).
-- `contextbase watch [start|stop|status]`: Observador en tiempo real que sincroniza cambios del árbol de trabajo hacia `contextbase/`.
-- `contextbase init`: Inicializa o repara `contextbase/` y todas las integraciones de agentes.
-- `contextbase status` / `check`: Estado visual o estructurado (`--json`, `--check`).
-- `contextbase context`: Digest compacto (pendientes, progreso, brechas, siguiente acción).
-- `contextbase task add|done|list "<tarea>"`: Gestiona tareas en `tasklist.md`.
-- `contextbase log "<mensaje>"`: Registra un cambio en `changelog.md`.
-- `contextbase sync`: Sincroniza `fundamentos.md`, cambios del árbol de trabajo y reglas de agentes.
-- `contextbase audit`: Regenera `contextbase/componentes.md` (inventario, frescura y brechas).
-- `contextbase hook [install|remove]`: Instala hooks Git (`post-commit`, `post-merge`, `post-checkout`).
-- `contextbase mcp`: Servidor MCP sobre stdio con 24 tools, resources, prompts y watcher activo.
-- `contextbase review [base] [--intent "texto"]`: Paquete de revisión tipo thermos.
-- `contextbase redundancy [--json]`: Detecta redundancia global en skills, referencias y MCP.
-- `contextbase slop [base] [--json]`: Escanea el diff con las reglas heurísticas antislop.
-- `contextbase export <estado|digest> [json|html] [archivo]`: Exporta estado o digest.
-- `contextbase bootstrap` / `guard` / `snapshot` / `restore` / `tools`: Gestión y protección del entorno base.
-
-### Recursos, Prompts y Tools MCP
-- **24 Tools:** `contextbase_status`, `contextbase_context`, `contextbase_log`, `contextbase_task`, `contextbase_audit`, `contextbase_sync`, `contextbase_bootstrap`, `contextbase_guard`, `contextbase_snapshot`, `contextbase_restore`, `contextbase_tools`, `contextbase_review`, `contextbase_redundancy`, `contextbase_slop`, `contextbase_export`, `contextbase_strands_prepare`, `contextbase_init`, `contextbase_hook`, `contextbase_mission`, `contextbase_swarm_start`, `contextbase_swarm_status`, `contextbase_swarm_send`, `contextbase_swarm_collect`, `contextbase_swarm_stop`.
-- **Resources:** `contextbase://digest`, `contextbase://state`, `contextbase://fundamentos`, `contextbase://changelog`, `contextbase://tasklist`, `contextbase://componentes`, `contextbase://strands/context`.
-- **Prompts:** `contextbase_session`, `contextbase_mission`.
-
-## Enjambre de agentes (swarm)
-Cuando el usuario pida trabajo en paralelo, varios agentes, o "enjambre":
-
-1. `contextbase swarm start --task "<objetivo>" --workers N [--agent opencode|kilo]` crea N worktrees, N ramas y N sesiones.
-2. Pasa los session ids al orquestador para que reparta tareas.
-3. `contextbase swarm status` informa quién avanza, quién está `stale` y quién terminó.
-4. `contextbase swarm send --worker w1 --message "..."` redirige a un worker vivo.
-5. `contextbase swarm collect` lee `result.md` y el veredicto de merge por rama.
-6. `contextbase swarm stop` detiene procesos al cerrar.
+## Comandos Principales de la Zona de Flujo
+- `contextbase web start --prey "tu objetivo en texto humano" --spiders 3` (también acepta `contextbase telarana` o `contextbase swarm`)
+- `contextbase web arbitrate` (ejecuta el Árbitro Automático: `PASS` / `REFIX` / `RERUN` / `FAIL`)
+- `contextbase web flow` y `contextbase web metrics --json` (tablero de Zona de Flujo y ahorro de tokens)
+- `contextbase web weave [--merge]` (verifica que ningún hilo rompa a otro y teje las ramas en `PASS`)
+- `contextbase web collect` y `contextbase web stop`

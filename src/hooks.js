@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { autoEnsure } from './auto.js';
 import { collectState, buildDigest } from './context.js';
 import { syncWorkspaceChanges } from './watcher.js';
+import { autoFinalizeSpiderWorktree, autoPulseWeb, PHILOSOPHY } from './web.js';
 
 function shellQuote(text) {
   return "'" + String(text).replace(/'/g, "'\\''") + "'";
@@ -14,6 +15,44 @@ function readOwnVersion() {
     return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0';
   } catch {
     return '0.0.0';
+  }
+}
+
+/**
+ * Construye el bloque de misión automática si la sesión se está ejecutando dentro del worktree de una Araña.
+ */
+function buildSpiderLiveInstructions(projectDir) {
+  const spiderCtxPath = path.join(projectDir, 'contextbase', '.spider-context.json');
+  if (!fs.existsSync(spiderCtxPath)) return '';
+  try {
+    const meta = JSON.parse(fs.readFileSync(spiderCtxPath, 'utf8'));
+    if (!meta || !meta.run || !meta.spiderId) return '';
+    const root = meta.rootCwd ? path.resolve(meta.rootCwd) : projectDir;
+    const refixAbs = meta.refixPath ? path.join(root, meta.refixPath) : null;
+    const refixText = refixAbs && fs.existsSync(refixAbs) ? fs.readFileSync(refixAbs, 'utf8').trim() : '';
+
+    const lines = [
+      '',
+      `## 🕷️ MODO ARAÑA ACTIVO EN WORKTREE (${meta.spiderId} — Run ${meta.run})`,
+      `- **Filosofía:** "${PHILOSOPHY}"`,
+      `- **Rama Aislada:** \`${meta.branch}\``,
+      `- **Segmento de la Presa:** ${meta.preySegment || meta.prey}`,
+      `- **Archivos de tu Hilo (PERMITIDOS):** ${(meta.assignedFiles || []).join(', ') || '(Dentro de tu módulo)'}`,
+      `- **Archivos de otras Arañas (PROHIBIDOS):** ${(meta.forbiddenFiles || []).slice(0, 12).join(', ') || '(Ninguno)'}`,
+      '- **Cadena de 3 Subagentes Secuenciales (sin anidar subagentes):**',
+      '  1. `Explorador de Hilo` -> Lee solo `contextbase/` y tus archivos asignados.',
+      '  2. `Constructor Focalizado` -> Implementa el cambio dentro de tu hilo.',
+      `  3. \`Verificador y Árbitro Local\` -> Valida pruebas, 0 slop y escribe \`${meta.resultPath}\` y \`${meta.statusPath}\`.`,
+    ];
+
+    if (refixText) {
+      lines.push('');
+      lines.push('### ⚠️ ORDEN ACTIVA DEL ÁRBITRO AUTOMÁTICO (refix.md):');
+      lines.push(refixText);
+    }
+    return lines.join('\n');
+  } catch {
+    return '';
   }
 }
 
@@ -106,17 +145,24 @@ function parseStdinPayload() {
  * Ejecuta eventos automaticos de ciclo de vida invocados por plugins de OpenCode/Kilo,
  * hooks de Claude Code o hooks de Git.
  */
-export async function runLifecycleHook(event = 'session-start', projectDir = process.cwd(), extraArgs = []) {
+export async function runLifecycleHook(event = 'session-start', projectDir = process.cwd(), extraArgs = [], deps = null) {
   const root = path.resolve(projectDir);
   const evt = String(event || 'session-start').toLowerCase();
 
   try {
-    autoEnsure(root);
+    autoEnsure(root, { deps });
   } catch {}
 
   if (evt === 'session-start' || evt === 'digest') {
     const state = collectState(root);
-    return buildDigest(state, readOwnVersion());
+    const baseDigest = buildDigest(state, readOwnVersion());
+    const spiderBlock = buildSpiderLiveInstructions(root);
+    return spiderBlock ? `${baseDigest}\n${spiderBlock}` : baseDigest;
+  }
+
+  if (evt === 'web-pulse') {
+    const arb = autoPulseWeb(root, deps);
+    return JSON.stringify(arb || { active: false });
   }
 
   if (evt === 'task-add' && extraArgs[0]) {
@@ -153,7 +199,13 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
 
   if (evt === 'session-stop' || evt === 'stop' || evt === 'post-commit' || evt === 'post-merge' || evt === 'post-checkout') {
     const logChanges = evt !== 'post-commit';
-    const res = syncWorkspaceChanges(root, extraArgs, { logChanges, force: evt === 'post-commit' || evt === 'post-merge' });
+    const res = syncWorkspaceChanges(root, extraArgs, { logChanges, force: evt === 'post-commit' || evt === 'post-merge', deps });
+    try {
+      autoFinalizeSpiderWorktree(root, res.files && res.files.length ? res.files : extraArgs, deps);
+    } catch {}
+    try {
+      autoPulseWeb(root, deps);
+    } catch {}
     return JSON.stringify(res);
   }
 

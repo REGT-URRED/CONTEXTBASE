@@ -66,9 +66,18 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `src/strands.js`: Contexto Python para Strands (`contextbase/strands/`), configuración, tareas y `strands_runner.py` con escalado humano.
 - `src/swarm.js` y `src/swarm-agents.js`: Orquestación de enjambre por worktrees para `opencode` y `kilo`.
 - `src/prompts/`: Prompts de revisor `review-security.md`, `review-quality.md` y `mission-orchestration.md`.
-- `test/`: Suite de 81 pruebas con el runner nativo `node:test` (sin dependencias).
+- `test/`: Suite de 112 pruebas con el runner nativo `node:test` (sin dependencias), incluyendo `test/qa-hardening.test.js` y `test/terminals.test.js`.
+- `src/env.js`: Criterio único `isTestEnv()`/`realAgentsAllowed()` (guard NODE_TEST_CONTEXT) para que ninguna ruta lance agentes reales bajo `node --test`.
+- `src/jsonc.js`: Fusión quirúrgica sobre JSONC (parse con posición de miembros, `setJsoncPath`, `appendJsoncArray`, `parseJsonc`) preservando comentarios.
+- `src/terminals.js`: Identificación de terminales/procesos de agente abiertos para el proyecto, cierre protegido (dry-run + `--yes`, nunca el propio árbol) y envío por contrato nativo (`opencode run --session`).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
 - `docs/FUNCIONAMIENTO.md`: Documentación funcional completa del flujo automático, plugins, hooks, watcher, MCP, Strands y swarm.
+
+### Contratos del Sistema (2026-11-11)
+- **Códigos de salida:** `0` éxito, `1` error de ejecución, `2` error de uso (subcomando/flag/argumento inválido).
+- **Configuración de usuario (global y proyecto):** un archivo existente que no parsea NUNCA se sobrescribe; se deja backup `.bak-contextbase` y se reporta con `[ContextBase Error] code=CONFIG_INVALID_JSON`. Los `.jsonc` existentes (Kilo/OpenCode) se fusionan quirúrgicamente preservando comentarios, con precedencia sobre el `.json`.
+- **Guard de pruebas:** toda ruta que pueda lanzar procesos de agente (swarm/web/auto/hooks/watcher) está inerte bajo `NODE_TEST_CONTEXT`; `node --test` debe terminar solo y en segundos.
+- **Control de terminales:** `terminals list` (solo lectura), `terminals close <pid...|all> [--yes] [--force]` (dry-run por defecto, nunca cierra el árbol propio ni procesos no identificados como agentes), `terminals send <pid> --message "..."` (por contrato nativo; no se inyectan teclas en TUIs ajenas).
 
 ---
 
@@ -78,7 +87,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Versión:** 1.5.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (56), Markdown (15), JSON (2)
+- **Lenguajes dominantes:** JavaScript (67), Markdown (15), JSON (3)
 - **Dependencias:** Sin dependencias externas registradas.
 - **Scripts:** start, postinstall, auto, watch, test, audit, mcp, pack:release, test:ci, release:github
 - **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test

@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 import { detectCli } from './detect.js';
 import { getRegistry, setEnabled } from './registry.js';
@@ -8,6 +8,17 @@ import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bo
 import { missionText } from './mission.js';
 import { agentInfo } from './swarm-agents.js';
 import { startSwarm, swarmCollect, swarmSend, swarmStatus, swarmStop } from './swarm.js';
+import { arbitrateWeb, PHILOSOPHY, webFlow, webMetrics, weaveWeb } from './web.js';
+import {
+  configureUniversalBridges,
+  listUniversalAgents,
+  registerCustomAgent,
+} from './universal-agents.js';
+import {
+  compileHumanIntent,
+  runAutopilotCycle,
+  verifyAgentObedience,
+} from './control.js';
 
 const c = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m', cyan: '\x1b[36m',
@@ -22,9 +33,18 @@ export async function runExtra(command, args, cwd) {
     return true;
   }
 
-  if (command === 'swarm') {
+  if (command === 'swarm' || command === 'web' || command === 'telarana' || command === 'telaraña') {
     return runSwarmCommand(args, cwd);
   }
+
+  if (command === 'control' || command === 'govern') {
+    return runControlCommand(args, cwd);
+  }
+
+  if (command === 'agents') {
+    return runAgentsCommand(args, cwd);
+  }
+
   if (command === 'bootstrap') {
     const cliArg = (args.find(a => a.startsWith('--cli=')) || '').replace('--cli=', '') || 'auto';
     const toolsArg = (args.find(a => a.startsWith('--tools=')) || '').replace('--tools=', '');
@@ -69,11 +89,9 @@ export async function runExtra(command, args, cwd) {
       }
     }
     if (show && r.drifts.length) {
-      const fsMod = await import('node:fs');
-      const pathMod = await import('node:path');
       for (const d of r.drifts) {
         try {
-          const content = fsMod.readFileSync(pathMod.join(cwd, d.file), 'utf8');
+          const content = fs.readFileSync(path.join(cwd, d.file), 'utf8');
           console.log('\n' + c.cyan + '=== ' + d.file + ' ===' + c.reset + '\n' + content);
         } catch {}
       }
@@ -83,16 +101,36 @@ export async function runExtra(command, args, cwd) {
   }
 
   if (command === 'snapshot') {
+    const sub = args[1];
     const noteArg = (args.find(a => a.startsWith('--note=')) || '').replace('--note=', '');
-    const id = await snapshot.create(cwd, noteArg);
-    console.log(c.green + 'Snapshot creado:' + c.reset + ' ' + id);
+    if (sub === 'list') {
+      const items = snapshot.list(cwd);
+      if (args.includes('--json')) { console.log(JSON.stringify(items, null, 2)); return true; }
+      if (!items.length) { console.log('(sin snapshots)'); return true; }
+      for (const it of items) console.log(it.id + (it.note ? ' - ' + it.note : ''));
+      return true;
+    }
+    if (sub === 'restore') {
+      const id = args[2] && !args[2].startsWith('--') ? args[2] : undefined;
+      const r = await snapshot.restore(cwd, id);
+      if (!r.ok) { console.log(c.red + 'Error:' + c.reset + ' ' + r.error); process.exitCode = 1; return true; }
+      console.log(c.green + 'Restaurados:' + c.reset + ' ' + (r.restored.join(', ') || '(ninguno)'));
+      return true;
+    }
+    if (sub === 'create' || sub === undefined || sub.startsWith('--')) {
+      const id = await snapshot.create(cwd, noteArg);
+      console.log(c.green + 'Snapshot creado:' + c.reset + ' ' + id);
+      return true;
+    }
+    console.error(c.red + 'Error: subcomando de snapshot no soportado: ' + sub + ' (usa: snapshot | snapshot list | snapshot restore <id>)' + c.reset);
+    process.exitCode = 2;
     return true;
   }
 
   if (command === 'restore') {
     const id = args[1] && !args[1].startsWith('--') ? args[1] : undefined;
     const r = await snapshot.restore(cwd, id);
-    if (!r.ok) { console.log(c.red + 'Error:' + c.reset + ' ' + r.error); return true; }
+    if (!r.ok) { console.log(c.red + 'Error:' + c.reset + ' ' + r.error); process.exitCode = 1; return true; }
     console.log(c.green + 'Restaurados:' + c.reset + ' ' + (r.restored.join(', ') || '(ninguno)'));
     return true;
   }
@@ -112,6 +150,62 @@ export async function runExtra(command, args, cwd) {
       return true;
     }
     console.log(c.yellow + 'Uso: contextbase tools list|enable <name>|disable <name>' + c.reset);
+    return true;
+  }
+
+  if (command === 'terminals') {
+    const sub = args[1] || 'list';
+    const json = args.includes('--json');
+    const terms = await import('./terminals.js');
+    if (sub === 'list') {
+      const items = terms.listTerminals(cwd);
+      if (json) { console.log(JSON.stringify(items, null, 2)); return true; }
+      if (!items.length) { console.log('No se identificaron terminales de agente en ejecucion en este equipo.'); return true; }
+      console.log(c.bold + 'PID     AGENTE         SCOPE      PROTEGIDO  SESION        COMANDO' + c.reset);
+      for (const t of items) {
+        const line = [String(t.pid).padEnd(7), String(t.agent).padEnd(14), String(t.scope).padEnd(10), (t.protected ? 'si' : 'no').padEnd(10), String(t.sessionId || '-').padEnd(13), String(t.commandLine || '').slice(0, 60)].join(' ');
+        console.log((t.protected ? c.gray : t.scope === 'project' ? c.green : c.dim) + line + c.reset);
+      }
+      return true;
+    }
+    if (sub === 'close') {
+      const rest = args.slice(2).filter(a => !a.startsWith('--'));
+      const yes = args.includes('--yes');
+      const force = args.includes('--force');
+      const targets = args.includes('--all') ? ['all'] : rest;
+      if (!targets.length) { console.error('Uso: contextbase terminals close <pid...|all> [--all] [--yes] [--force]'); process.exitCode = 2; return true; }
+      const res = terms.closeTerminals(targets, { yes, force, cwd });
+      if (res.dryRun) {
+        console.log('DRY-RUN: no se cerro nada. Objetivos identificados:');
+        for (const t of res.targets) {
+          console.log('  - pid ' + t.pid + (t.agent ? ' (' + t.agent + ', ' + t.scope + (t.protected ? ', protegido' : '') + ')' : ' ERROR: ' + t.error));
+        }
+        console.log('Ejecuta de nuevo con --yes para cerrar.');
+        return true;
+      }
+      for (const r of res.results) console.log((r.ok ? 'OK' : 'FAIL') + ' pid ' + r.pid + (r.agent ? ' (' + r.agent + ')' : '') + (r.reason ? ' - ' + r.reason : ''));
+      if (!res.ok) process.exitCode = 1;
+      return true;
+    }
+    if (sub === 'send') {
+      const pid = args[2];
+      const msgFlag = args.find(a => a.startsWith('--message='));
+      const message = msgFlag ? msgFlag.replace('--message=', '') : args.slice(3).filter(a => !a.startsWith('--')).join(' ');
+      const pidNum = Number(pid);
+      if (!pid || !Number.isInteger(pidNum) || pidNum <= 0) { console.error('Uso: contextbase terminals send <pid> --message "..."'); process.exitCode = 2; return true; }
+      try {
+        const r = terms.sendToTerminal(pidNum, message, { cwd });
+        if (json) { console.log(JSON.stringify(r, null, 2)); return true; }
+        console.log((r.ok ? 'OK' : 'FAIL') + ' pid ' + r.pid + ' (' + r.sessionId + ')' + (r.tail ? '\n' + r.tail : ''));
+        if (!r.ok) process.exitCode = 1;
+      } catch (err) {
+        console.error('Error: ' + err.message);
+        process.exitCode = 1;
+      }
+      return true;
+    }
+    console.error('Uso: contextbase terminals [list|close <pid...|all> [--yes] [--force]|send <pid> --message "..."]');
+    process.exitCode = 2;
     return true;
   }
 
@@ -147,49 +241,268 @@ function printWorkers(workers) {
   }
 }
 
+export function runControlCommand(args, cwd) {
+  cwd = cwd || process.cwd();
+  const sub = args[1] && !args[1].startsWith('--') ? args[1] : 'status';
+  const flags = parseFlags(args.slice(1));
+  const json = Boolean(flags.json);
+
+  if (sub === 'compile') {
+    const intent = flags.intent || flags.prey || flags.task || args.slice(2).filter(a => !a.startsWith('--')).join(' ');
+    const contract = compileHumanIntent(cwd, intent, { spiders: flags.spiders || flags.workers || 3 });
+    if (json) {
+      console.log(JSON.stringify(contract, null, 2));
+      return true;
+    }
+    console.log(c.green + '\u2713 Contrato Determinista compilado bajo "' + PHILOSOPHY + '"' + c.reset);
+    console.log('  Ahorro de tokens proyectado: ' + contract.cognitiveGovernance.tokenSavingsPct + '% (' + contract.cognitiveGovernance.leverageFactor + 'x)');
+    console.log('  Hilos disjuntos generados: ' + contract.fileBoundaries.threads.length);
+    console.log('  Guardado en: contextbase/control/intent-contract.json y contextbase/control/control.md');
+    return true;
+  }
+
+  if (sub === 'autopilot') {
+    const res = runAutopilotCycle(cwd, { autoConfig: Boolean(flags.all), run: flags.run });
+    if (json) {
+      console.log(JSON.stringify(res, null, 2));
+      return true;
+    }
+    console.log(c.green + '\u2713 Ciclo de Autopiloto Soberano ejecutado (' + res.obedience.verdict + ' — ' + res.obedience.sovereigntyScore + '/100)' + c.reset);
+    return true;
+  }
+
+  const report = verifyAgentObedience(cwd, { run: flags.run });
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return true;
+  }
+  console.log(c.bold + 'Gobernanza Soberana :: "' + report.philosophy + '"' + c.reset);
+  console.log('  Índice de Control Soberano: ' + c.cyan + report.sovereigntyScore + '/100' + c.reset + ' [' + report.verdict + ']');
+  console.log('  Agentes universales soportados: ' + report.supportedAgentsCount);
+  for (const ch of report.checks) {
+    const icon = ch.status === 'PASS' ? c.green + '\u2713' : ch.status === 'WARN' ? c.yellow + '\u26A0' : c.red + '\u2717';
+    console.log(`  ${icon}${c.reset} ${ch.gate}: ${ch.points}/25 ${ch.detail ? `(${ch.detail})` : ''}`);
+  }
+  return true;
+}
+
+export function runAgentsCommand(args, cwd) {
+  cwd = cwd || process.cwd();
+  const sub = args[1] && !args[1].startsWith('--') ? args[1] : 'list';
+  const flags = parseFlags(args.slice(1));
+  const json = Boolean(flags.json);
+
+  if (sub === 'register') {
+    const id = flags.name || flags.id || args[2];
+    const registered = registerCustomAgent(cwd, {
+      id,
+      displayName: flags.display || id,
+      binary: flags.binary || id,
+      commandTemplate: flags.cmd || flags.template,
+    });
+    if (json) {
+      console.log(JSON.stringify(registered, null, 2));
+      return true;
+    }
+    console.log(c.green + '\u2713 Agente personalizado registrado en contextbase/agents.json: ' + registered.id + c.reset);
+    console.log('  Plantilla de comando: ' + registered.commandTemplate);
+    return true;
+  }
+
+  if (sub === 'configure') {
+    const written = configureUniversalBridges(cwd, { includeAll: true, universal: true });
+    if (json) {
+      console.log(JSON.stringify({ configured: written }, null, 2));
+      return true;
+    }
+    console.log(c.green + '\u2713 Adaptadores universales generados (' + written.length + ' archivos): ' + written.join(', ') + c.reset);
+    return true;
+  }
+
+  const list = listUniversalAgents(cwd);
+  if (json) {
+    console.log(JSON.stringify(list, null, 2));
+    return true;
+  }
+  console.log(c.bold + 'Catálogo Universal de Agentes de Código (' + list.length + ' agentes soportados):' + c.reset);
+  for (const a of list) {
+    const mode = a.nativeSwarmVerified ? c.green + 'nativo+universal' + c.reset : c.cyan + 'universal (--universal)' + c.reset;
+    console.log(`  - ${c.bold}${a.id.padEnd(10)}${c.reset} (${a.displayName.padEnd(24)}) [${mode}] -> ${c.dim}${a.commandTemplate}${c.reset}`);
+  }
+  return true;
+}
+
 export function runSwarmCommand(args, cwd) {
   cwd = cwd || process.cwd();
   const sub = args[1] || 'status';
   const flags = parseFlags(args.slice(2));
   const json = Boolean(flags.json);
 
-  if (sub === 'help') {
+  if (sub === 'help' || sub === '--help' || sub === '-h') {
     console.log(usSwarmHelp());
     return true;
   }
 
   if (sub === 'start') {
+    const preyOrTask = flags.prey || flags.task || '';
+    const spidersOrWorkers = flags.spiders ?? flags.workers;
     const out = startSwarm({
       cwd,
       base: flags.base,
       agent: flags.agent,
-      workers: flags.workers,
-      task: flags.task,
+      universal: Boolean(flags.universal),
+      agentCmd: flags['agent-cmd'] || flags.cmd,
+      workers: spidersOrWorkers,
+      spiders: spidersOrWorkers,
+      task: preyOrTask,
+      prey: preyOrTask,
       ttlMinutes: flags.ttl,
     });
     if (json) {
       console.log(JSON.stringify(out, null, 2));
       return true;
     }
-    console.log(c.green + '\u2713 Swarm ' + out.run + ' iniciado con ' + out.workers.length + ' workers.' + c.reset);
-    console.log(c.dim + 'Las sesiones ya existen: pasalas al orquestador. Ventanas abiertas en cada worktree.' + c.reset + '\n');
+    console.log(c.green + '\u2713 Telaraña / Swarm ' + out.run + ' iniciada con ' + out.workers.length + ' Arañas (workers) en ' + out.agent + '.' + c.reset);
+    console.log(c.cyan + '  Filosofía: "' + PHILOSOPHY + '"' + c.reset);
+    if (out.tokenEconomy) {
+      console.log(c.magenta + '  Economía de Tokens: ahorro estimado del ' + out.tokenEconomy.savingsPct + '% (' + out.tokenEconomy.savedTokens + ' tokens ahorrados).' + c.reset);
+    }
+    console.log(c.dim + 'Las sesiones y subagentes secuenciales (subagents.json) ya existen en cada worktree.' + c.reset + '\n');
     printWorkers(out.workers.map((w) => ({ ...w, changes: 0, state: 'lanzado' })));
     return true;
   }
 
-  if (sub === 'status') {
+  if (sub === 'arbitrate' || sub === 'judge') {
     let out;
     try {
-      out = swarmStatus({ cwd, run: flags.run });
+      out = arbitrateWeb({
+        cwd,
+        run: flags.run,
+        autoFix: flags['no-fix'] ? false : true,
+        maxRetries: flags.retries ? Number(flags.retries) : 2,
+      });
     } catch (err) {
-      console.log(c.dim + err.message + c.reset);
+      const msg = String((err && err.message) || err);
+      const empty = Boolean(err && err.code === 'NO_RUNS');
+      if (json) console.log(JSON.stringify(empty ? { empty: true, message: msg } : { error: msg }));
+      else console.log(c.dim + msg + c.reset);
+      if (!empty) process.exitCode = 1;
       return true;
     }
     if (json) {
       console.log(JSON.stringify(out, null, 2));
       return true;
     }
-    console.log(c.bold + 'Run ' + out.run + ' (' + out.agent + ', ttl ' + out.ttlMinutes + ' min)' + c.reset);
+    console.log(c.bold + 'Árbitro Automático :: Run ' + out.run + ' [' + out.flowState + ']' + c.reset);
+    console.log(c.dim + 'Filosofía: "' + out.philosophy + '" | Ahorro tokens: ' + out.tokenEconomy.savingsPct + '%' + c.reset + '\n');
+    console.log(c.bold + 'id   veredicto  puntaje  merge     slop  intentos  acción' + c.reset);
+    for (const s of out.spiders) {
+      const vColor =
+        s.verdict === 'PASS' ? c.green : s.verdict === 'FAIL' ? c.red : c.yellow;
+      console.log(
+        String(s.id).padEnd(5) +
+        (vColor + String(s.verdict).padEnd(11) + c.reset) +
+        String(s.score + '/100').padEnd(9) +
+        String(s.merge).padEnd(10) +
+        String(s.slopFindings).padEnd(6) +
+        String(s.retries + '/2').padEnd(10) +
+        String(s.actionTaken)
+      );
+    }
+    return true;
+  }
+
+  if (sub === 'flow') {
+    let out;
+    try {
+      out = webFlow({ cwd, run: flags.run, arbitrate: Boolean(flags.arbitrate) });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const empty = Boolean(err && err.code === 'NO_RUNS');
+      if (json) console.log(JSON.stringify(empty ? { empty: true, message: msg } : { error: msg }));
+      else console.log(c.dim + msg + c.reset);
+      if (!empty) process.exitCode = 1;
+      return true;
+    }
+    if (json) {
+      console.log(JSON.stringify(out, null, 2));
+      return true;
+    }
+    console.log(out.markdown);
+    return true;
+  }
+
+  if (sub === 'metrics') {
+    let out;
+    try {
+      out = webMetrics({ cwd, run: flags.run });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const empty = Boolean(err && err.code === 'NO_RUNS');
+      if (json) console.log(JSON.stringify(empty ? { empty: true, message: msg } : { error: msg }));
+      else console.log(c.dim + msg + c.reset);
+      if (!empty) process.exitCode = 1;
+      return true;
+    }
+    if (json) {
+      console.log(JSON.stringify(out, null, 2));
+      return true;
+    }
+    console.log(c.bold + 'Métricas de Zona de Flujo y Economía de Tokens (' + out.run + ')' + c.reset);
+    console.log('  Estado de Flujo: ' + out.flowState);
+    console.log('  Telaraña Intacta: ' + (out.webIntact ? 'Sí (0 colisiones)' : 'No'));
+    console.log('  Ahorro de Tokens: ' + out.tokenEconomy.savingsPct + '% (' + out.tokenEconomy.savedTokens + ' tokens ahorrados)');
+    console.log('  Factor Multiplicador: ' + out.tokenEconomy.leverageFactor + 'x');
+    return true;
+  }
+
+  if (sub === 'weave' || sub === 'tejer') {
+    let out;
+    try {
+      out = weaveWeb({ cwd, run: flags.run, merge: Boolean(flags.merge) });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const empty = Boolean(err && err.code === 'NO_RUNS');
+      if (json) console.log(JSON.stringify(empty ? { empty: true, message: msg } : { error: msg }));
+      else console.log(c.dim + msg + c.reset);
+      if (!empty) process.exitCode = 1;
+      return true;
+    }
+    if (json) {
+      console.log(JSON.stringify(out, null, 2));
+      return true;
+    }
+    console.log(
+      (out.ok ? c.green + '\u2713 Telaraña lista y verificada: ' : c.yellow + '\u26A0 Telaraña en progreso: ') +
+      'Run ' + out.run + ' (' + out.flowState + ')' + c.reset
+    );
+    console.log('  Hilos en PASS: ' + (out.passed.join(', ') || '(ninguno)'));
+    if (out.wovenBranches.length) {
+      console.log('  Ramas tejidas en base: ' + out.wovenBranches.join(', '));
+    }
+    return true;
+  }
+
+  if (sub === 'status') {
+    let out;
+    try {
+      if (flags.arbitrate) {
+        arbitrateWeb({ cwd, run: flags.run });
+      }
+      out = swarmStatus({ cwd, run: flags.run });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const empty = Boolean(err && err.code === 'NO_RUNS');
+      if (json) console.log(JSON.stringify(empty ? { empty: true, message: msg } : { error: msg }));
+      else console.log(c.dim + msg + c.reset);
+      if (!empty) process.exitCode = 1;
+      return true;
+    }
+    if (json) {
+      console.log(JSON.stringify(out, null, 2));
+      return true;
+    }
+    console.log(c.bold + 'Run ' + out.run + ' (' + out.agent + ', ttl ' + out.ttlMinutes + ' min, flujo ' + (out.flowState || 'EN_ZONA') + ')' + c.reset);
     printWorkers(out.workers);
     const stale = out.workers.filter((w) => w.stale);
     if (stale.length) {
@@ -200,7 +513,7 @@ export function runSwarmCommand(args, cwd) {
 
   if (sub === 'send') {
     const positional = args.slice(2).filter((a) => !a.startsWith('--'));
-    const worker = flags.worker || positional[0] || 'all';
+    const worker = flags.spider || flags.worker || positional[0] || 'all';
     const message = flags.message || positional.slice(1).join(' ');
     const out = swarmSend({ cwd, run: flags.run, worker, message });
     console.log(c.green + '\u2713 Enviado (' + out.delivered + ') a ' + out.workers.map((w) => w.id).join(', ') + c.reset);
@@ -211,6 +524,9 @@ export function runSwarmCommand(args, cwd) {
   }
 
   if (sub === 'collect') {
+    if (flags.arbitrate) {
+      try { arbitrateWeb({ cwd, run: flags.run }); } catch {}
+    }
     const out = swarmCollect({ cwd, run: flags.run });
     if (json) {
       console.log(JSON.stringify(out, null, 2));
@@ -235,23 +551,30 @@ export function runSwarmCommand(args, cwd) {
     return true;
   }
 
-  console.log(c.red + 'Subcomando de swarm no reconocido: ' + sub + c.reset + '\n');
+  console.log(c.red + 'Subcomando de web/swarm no reconocido: ' + sub + c.reset + '\n');
   console.log(usSwarmHelp());
+  process.exitCode = 2;
   return true;
 }
 
 function usSwarmHelp() {
   return [
-    'Uso: contextbase swarm <subcomando> [flags]',
+    'Uso: contextbase <web|telarana|swarm> <subcomando> [flags]',
     '',
-    '  start     --task \"...\" [--workers 2] [--agent opencode] [--base main] [--ttl 10]',
-    '  status    [--run <id>] [--json]',
-    '  send      [--worker w1|all] --message \"...\" [--run <id>]',
-    '  collect   [--run <id>] [--json]',
-    '  stop      [--run <id>]',
+    '  start      --prey "..." [--spiders 3] [--agent <nombre>] [--universal] [--agent-cmd "..."] [--base main] [--ttl 10]',
+    '  arbitrate  [--run <id>] [--no-fix] [--retries 2] [--json]  (Árbitro Automático: PASS / REFIX / RERUN / FAIL)',
+    '  flow       [--run <id>] [--arbitrate] [--json]             (Tablero de Zona de Flujo y flow.md)',
+    '  metrics    [--run <id>] [--json]                           (Economía de Tokens y métricas de cumplimiento)',
+    '  weave      [--run <id>] [--merge] [--json]                 (Verifica que los hilos no se rompan entre sí)',
+    '  status     [--run <id>] [--arbitrate] [--json]',
+    '  send       [--worker w1|all] --message "..." [--run <id>]',
+    '  collect    [--run <id>] [--arbitrate] [--json]',
+    '  stop       [--run <id>]',
     '',
-    'Cada worker recibe: worktree propio, rama swarm/<run>/<id>, sesion ses_cb_<run>_<id>.',
-    'El canal real es archivo: task.md de entrada, result.md y status.json de salida.',
-    'Agentes sin contrato de sesion verificado: ' + Object.keys({ claude: 1, codex: 1 }).map((n) => n + ' (' + agentInfo(n).reason + ')').join(', '),
+    'Filosofía: "' + PHILOSOPHY + '"',
+    'Cada Araña recibe: worktree propio con memoria pre-hidratada, hilo disjunto, rama swarm/<run>/<id>,',
+    '3 subagentes secuenciales (subagents.json) y arbitraje automático sobre 100 puntos.',
+    'Usa --universal o "contextbase agents register" para lanzar cualquier agente de código del mercado.',
+    'Agentes sin contrato nativo de sesion verificado (usar --universal): ' + Object.keys({ claude: 1, codex: 1 }).map((n) => n + ' (' + agentInfo(n).reason + ')').join(', '),
   ].join('\n');
 }

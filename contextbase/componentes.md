@@ -10,7 +10,7 @@ Inventario vivo de componentes, frescura de versiones y verificación de brechas
 
 ## Inventario de Componentes
 
-- **Node.js / npm** — manifiesto `package.json`, última modificación: 2026-11-11
+- **Node.js / npm** — manifiesto `package.json`, última modificación: 2026-11-12
   - Sin dependencias declaradas.
 
 ---
