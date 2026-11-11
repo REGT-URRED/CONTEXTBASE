@@ -40,5 +40,6 @@ opencode.json
 opencode.jsonc
 .mcp.json
 .opencode/
+.agents/
 .kilo/
 .kilocode/

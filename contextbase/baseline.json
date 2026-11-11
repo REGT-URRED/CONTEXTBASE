@@ -2,27 +2,27 @@
   "files": {
     "AGENTS.md": {
       "hash": "7c7659059c0134ab5dca1ce9cc371d6b8f355cbefed22de18518122bf91f3887",
-      "mtime": "2026-11-12T01:32:34.000Z"
+      "mtime": "2026-11-11T22:32:30.668Z"
     },
     "CLAUDE.md": {
       "hash": "43e06a515c42523b8d25d9020fa4172e59c4db9f8d875229c24dc6c2ebe2e0a3",
-      "mtime": "2026-11-12T01:32:34.000Z"
+      "mtime": "2026-11-11T22:32:30.670Z"
     },
     ".cursorrules": {
       "hash": "43e06a515c42523b8d25d9020fa4172e59c4db9f8d875229c24dc6c2ebe2e0a3",
-      "mtime": "2026-11-12T01:32:34.000Z"
+      "mtime": "2026-11-11T22:32:30.671Z"
     },
     ".windsurfrules": {
       "hash": "43e06a515c42523b8d25d9020fa4172e59c4db9f8d875229c24dc6c2ebe2e0a3",
-      "mtime": "2026-11-12T01:32:34.000Z"
+      "mtime": "2026-11-11T22:32:30.672Z"
     },
     ".gemini/rules/contextbase.md": {
       "hash": null,
       "mtime": null
     },
     ".agents/rules/contextbase.md": {
-      "hash": null,
-      "mtime": null
+      "hash": "40e30f3c950163d03189a4ec053ce48d2c58760253b091ebf26845437400b625",
+      "mtime": "2026-11-11T22:32:30.673Z"
     }
   },
   "created": "2026-10-27T18:55:21.163Z"
