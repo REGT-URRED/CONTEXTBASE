@@ -151,7 +151,11 @@ export function scan() {
       seen.get(n).push(label);
     }
   }
-  for (const [name, where] of seen) if (where.length > 1) duplicated.push({ name, where });
+  for (const [name, where] of seen) {
+    // contextbase se sincroniza intencionalmente en multiples CLIs para disponibilidad universal
+    if (name.toLowerCase() === 'contextbase') continue;
+    if (where.length > 1) duplicated.push({ name, where });
+  }
 
   const dangling = [];
   const knownSkills = new Set(Object.values(skills).flat().map(n => n.toLowerCase()));

@@ -31,5 +31,14 @@ contextbase/strands/
 contextbase/snapshot/
 contextbase/swarm/
 contextbase/*.lock
+contextbase/.watcher.pid
+contextbase/.auto-session.json
 .worktrees/
 kilo.json
+kilo.jsonc
+opencode.json
+opencode.jsonc
+.mcp.json
+.opencode/
+.kilo/
+.kilocode/

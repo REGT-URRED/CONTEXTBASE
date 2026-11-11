@@ -2,10 +2,10 @@
 // Genera archivos de Python con el contexto del proyecto para Strands.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { collectState } from './context.js';
 import { analyzeProject } from './scanner.js';
 import { writeAtomic } from './fsutil.js';
+import { CONTEXTBASE_VERSION } from './rules.js';
 
 export const STRANDS_DIR_NAME = 'contextbase/strands';
 
@@ -21,7 +21,6 @@ const c = {
 function log(msg) { if (process.env.CONTEXTBASE_VERBOSE === '1') process.stderr.write(msg + '\n'); }
 
 function pyBool(v) { return v ? 'True' : 'False'; }
-function pyNone() { return 'None'; }
 function pyStr(s) {
   const esc = String(s !== undefined ? s : '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
   return "'" + esc + "'";
@@ -50,10 +49,6 @@ function pyRepr(v) {
 
 function nowIso() { return new Date().toISOString(); }
 
-function pyEscapedComment(text) {
-  return String(text).replace(/'''/g, "\\'\\'\\'").replace(/#/g, '#');
-}
-
 function formatTasks(state) {
   const now = nowIso();
   const tasks = [];
@@ -81,7 +76,7 @@ function formatTasks(state) {
   return tasks;
 }
 
-export function prepareStrandsContext(projectDir, options = {}) {
+export function prepareStrandsContext(projectDir) {
   const resolvedDir = path.resolve(projectDir || process.cwd());
   const strandsDir = path.join(resolvedDir, STRANDS_DIR_NAME);
   const state = collectState(resolvedDir);
@@ -115,7 +110,7 @@ export function prepareStrandsContext(projectDir, options = {}) {
   writeAtomic(contextPath, JSON.stringify(contextJson, null, 2));
   writeAtomic(projectContextPath, generatePythonContext(state, analysis));
   writeAtomic(strandsConfigPath, generateStrandsConfig());
-  writeAtomic(tasksPath, generateTasksFile(formatTasks(state)))
+  writeAtomic(tasksPath, generateTasksFile(formatTasks(state)));
   writeAtomic(runnerPath, generateStrandsRunner());
   writeAtomic(readmePath, generateReadme(state, analysis));
 
@@ -169,7 +164,7 @@ export function generatePythonContext(state, analysis) {
   const nextAction = (() => {
     if (state.security.critical > 0 || state.security.high > 0) return 'Corregir brechas de seguridad critical/high y registrarlas en tasklist.md.';
     if (!state.files['componentes.md'] || !state.files['componentes.md'].exists || (state.files['componentes.md'].days || 0) > 7) return 'Regenerar inventario de componentes: contextbase audit.';
-    if (state.rules.versions && state.rules.versions.some(r => r.version !== '1.4.0')) return 'Sincronizar reglas de agente: contextbase sync.';
+    if (state.rules.versions && state.rules.versions.some(r => r.version !== CONTEXTBASE_VERSION)) return 'Sincronizar reglas de agente: contextbase sync.';
     if (state.tasks.pending.length > 0) return 'Continuar con la tarea pendiente: ' + state.tasks.pending[0];
     return 'Sin pendientes: registrar el proximo objetivo en tasklist.md.';
   })();
@@ -198,7 +193,7 @@ export function generatePythonContext(state, analysis) {
   lines.push("PROJECT_DESCRIPTION = " + pyStr((analysis.metadata && analysis.metadata.description) || ''));
   lines.push("FRAMEWORKS = " + pyList((analysis.metadata && analysis.metadata.frameworks) || []));
   lines.push("LANGUAGES = " + pyDict(analysis.languages || {}));
-  lines.push("GENERATED_AT = " + pyStr(nowIso()))
+  lines.push("GENERATED_AT = " + pyStr(nowIso()));
   lines.push('');
   lines.push('# ============================================================================');
   lines.push('# 2. TAREAS PENDIENTES Y COMPLETADAS');
@@ -241,7 +236,7 @@ export function generatePythonContext(state, analysis) {
   lines.push("GUARD_STATUS = " + pyStr(guardStatus));
   lines.push('# GUARD_DRIFTS: lista de archivos con deriva (file, kind).');
   lines.push("GUARD_DRIFTS = " + pyList(guardDrifts.map(d => ({ file: d.file, kind: d.kind }))));
-  lines.push('GUARD_HAS_DRIFT = ' + pyBool(guardStatus !== 'ok'))
+  lines.push('GUARD_HAS_DRIFT = ' + pyBool(guardStatus !== 'ok'));
   lines.push('');
   lines.push('# ============================================================================');
   lines.push('# 7. SIGUIENTE ACCION RECOMENDADA');
@@ -252,7 +247,7 @@ export function generatePythonContext(state, analysis) {
   lines.push('# ============================================================================');
   lines.push('# 8. GIT HISTORY Y TODOS');
   lines.push('# ============================================================================');
-  lines.push('GIT_HISTORY = ' + pyList((analysis.gitHistory || []).map(String)))
+  lines.push('GIT_HISTORY = ' + pyList((analysis.gitHistory || []).map(String)));
   lines.push('# TODOS: tareas detectadas en codigo (TODO, FIXME, HACK, BUG).');
   lines.push("TODOS = " + pyList((analysis.todos || []).map(t => ({ type: t.type, text: t.text, file: t.file, line: t.line }))));
   lines.push('');
@@ -624,4 +619,3 @@ function generateReadme(state, analysis) {
 export function isReady() {
   return true;
 }
-

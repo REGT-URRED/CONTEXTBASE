@@ -1,7 +1,14 @@
-﻿const AGENTS = {
+const AGENTS = {
   opencode: {
     supported: true,
     binary: 'opencode',
+    sessionFlag: '--session',
+    promptFlag: '--prompt',
+    reason: null,
+  },
+  kilo: {
+    supported: true,
+    binary: 'kilo',
     sessionFlag: '--session',
     promptFlag: '--prompt',
     reason: null,

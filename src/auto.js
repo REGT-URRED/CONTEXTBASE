@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { analyzeProject } from './scanner.js';
-import { writeContextBase } from './generator.js';
+import { writeContextBase, syncFundamentos } from './generator.js';
 import { runMaintenance } from './maintenance.js';
-import { injectAgentRules } from './rules.js';
+import { injectAgentRules, CONTEXTBASE_VERSION } from './rules.js';
 import { refreshBaseline } from './guard.js';
 import { installSkill } from './installer.js';
 import { prepareStrandsContext } from './strands.js';
+import { autoConfigureProject, ensureGitExclude } from './autoconfig.js';
+import { installGitHook } from './hooks.js';
 
 const BASE_FILES = ['fundamentos.md', 'changelog.md', 'tasklist.md'];
 const STRANDS_CONTEXT = path.join('contextbase', 'strands', 'context.json');
@@ -26,6 +28,10 @@ function relative(projectDir, file) {
   return path.relative(projectDir, file).replace(/\\/g, '/');
 }
 
+function isTestEnv() {
+  return Boolean(process.env.NODE_TEST_CONTEXT) || process.execArgv.includes('--test');
+}
+
 export function strandsStale(projectDir) {
   const root = resolveProject(projectDir);
   const contextMtime = mtimeMs(path.join(root, STRANDS_CONTEXT));
@@ -42,6 +48,23 @@ export function componentsStale(projectDir) {
   const componentsMtime = mtimeMs(path.join(root, COMPONENTS_FILE));
   if (componentsMtime === null) return true;
   return (Date.now() - componentsMtime) > COMPONENTS_MAX_AGE_MS;
+}
+
+export function rulesStale(projectDir) {
+  const root = resolveProject(projectDir);
+  const targets = ['AGENTS.md', 'CLAUDE.md', '.cursorrules', '.windsurfrules'];
+  const marker = `<!-- CONTEXTBASE:v${CONTEXTBASE_VERSION} -->`;
+  for (const rel of targets) {
+    const full = path.join(root, rel);
+    if (!fs.existsSync(full)) return true;
+    try {
+      const text = fs.readFileSync(full, 'utf8');
+      if (!text.includes(marker)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function refreshStrands(projectDir) {
@@ -66,7 +89,21 @@ export function refreshComponents(projectDir) {
   }
 }
 
-export function silentInit(projectDir) {
+export function refreshRulesAndSync(projectDir) {
+  const root = resolveProject(projectDir);
+  try {
+    if (!rulesStale(root)) return false;
+    const analysis = analyzeProject(root);
+    syncFundamentos(root, analysis);
+    injectAgentRules(root);
+    refreshBaseline(root);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function silentInit(projectDir, options = {}) {
   const root = resolveProject(projectDir);
   const contextDir = path.join(root, 'contextbase');
   fs.mkdirSync(contextDir, { recursive: true });
@@ -75,14 +112,25 @@ export function silentInit(projectDir) {
   const written = writeContextBase(root, analysis, { force: false });
   const files = written.filesWritten.slice();
 
+  try { syncFundamentos(root, analysis); } catch {}
+
   try {
     const maintenance = runMaintenance(root);
     if (maintenance && maintenance.file) files.push(relative(root, maintenance.file));
   } catch {}
 
+  try {
+    if (!isTestEnv() || options.autoConfig) {
+      const cfg = autoConfigureProject(root, options);
+      for (const f of cfg.files) files.push(f);
+    }
+  } catch {}
+
   try { injectAgentRules(root); } catch {}
   try { refreshBaseline(root); } catch {}
-  try { installSkill('global'); } catch {}
+  try { if (!isTestEnv() || options.installSkill) installSkill('all', root); } catch {}
+  try { if (fs.existsSync(path.join(root, '.git'))) installGitHook(root, 'install'); } catch {}
+  try { ensureGitExclude(root); } catch {}
 
   try {
     const strands = prepareStrandsContext(root);
@@ -92,19 +140,43 @@ export function silentInit(projectDir) {
   return { created: true, files };
 }
 
-export function autoEnsure(projectDir) {
+export function autoEnsure(projectDir, options = {}) {
   const root = resolveProject(projectDir);
-  const summary = { initialized: false, componentsRefreshed: false, strandsRefreshed: false };
+  const summary = {
+    initialized: false,
+    componentsRefreshed: false,
+    strandsRefreshed: false,
+    rulesRefreshed: false,
+    agentsConfigured: false,
+    gitHookInstalled: false
+  };
   try {
     const contextDir = path.join(root, 'contextbase');
     const missing = !fs.existsSync(contextDir) || BASE_FILES.some(name => !fs.existsSync(path.join(contextDir, name)));
     if (missing) {
-      silentInit(root);
+      silentInit(root, options);
       summary.initialized = true;
+      summary.agentsConfigured = !isTestEnv() || Boolean(options.autoConfig);
       return summary;
     }
+    summary.rulesRefreshed = refreshRulesAndSync(root);
     summary.componentsRefreshed = refreshComponents(root);
     summary.strandsRefreshed = refreshStrands(root);
+
+    if (!isTestEnv() || options.autoConfig) {
+      const needConfig = !fs.existsSync(path.join(root, 'kilo.json')) ||
+                         !fs.existsSync(path.join(root, 'opencode.json')) ||
+                         !fs.existsSync(path.join(root, '.opencode', 'plugins', 'contextbase-auto.js')) ||
+                         Boolean(options.autoConfig);
+      if (needConfig) {
+        autoConfigureProject(root, options);
+        summary.agentsConfigured = true;
+      }
+      if (fs.existsSync(path.join(root, '.git')) && !fs.existsSync(path.join(root, '.git', 'hooks', 'post-commit'))) {
+        const hk = installGitHook(root, 'install');
+        summary.gitHookInstalled = Boolean(hk && hk.ok);
+      }
+    }
   } catch {}
   return summary;
 }

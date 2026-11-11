@@ -8,15 +8,15 @@ export const CONTEXTBASE_VERSION = (() => {
 export const CONTEXTBASE_RULE_BLOCK = `<!-- CONTEXTBASE:START -->
 <!-- CONTEXTBASE:v${CONTEXTBASE_VERSION} -->
 ## Memoria Persistente y Bitácora del Proyecto (contextbase)
-Este proyecto utiliza un sistema de memoria técnica persistente en la carpeta \`contextbase/\`.
+Este proyecto utiliza un sistema automático de memoria técnica persistente en la carpeta \`contextbase/\`.
 
-### Regla Crítica de Actualización (Obligatoria para Agentes de Código):
-Toda futura corrección, mejora, alteración o nueva implementación en el código debe incluir **SIEMPRE**, como paso final y obligatorio, la actualización de los registros dentro de la carpeta \`contextbase/\`:
-1. **\`contextbase/changelog.md\`**: Documentar metódicamente el cambio en \`## Cambios Realizados\` con fecha y actualizar \`## Cambios por Hacer\`.
-2. **\`contextbase/tasklist.md\`**: Marcar con \`[x]\` las tareas completadas y registrar con \`[ ]\` cualquier nueva tarea o requerimiento pendiente.
-3. **\`contextbase/fundamentos.md\`**: Actualizar si hubo modificaciones en arquitectura, dependencias, scripts o reglas operativas.
-4. **Idioma**: Toda salida, bitácora y documentación debe mantenerse estrictamente en **español**.
-5. **Mantenimiento Preventivo Automático**: Al iniciar un proyecto o sesión y como verificación final al cerrar cada cambio, revisar \`contextbase/componentes.md\` (inventario, versiones instaladas y brechas de seguridad); regenerarlo con \`contextbase audit\`. Delegar en la CLI: no saturar las instrucciones con reglas adicionales.
+### Protocolo Automático Obligatorio para Agentes (OpenCode, Kilo, Claude, Cursor, Windsurf):
+1. **Inicio Automático de Sesión:** Al comenzar cualquier tarea o turno sin contexto previo, consultar inmediatamente \`contextbase_context\` (vía MCP) o leer \`contextbase/strands/context.json\` sin esperar a que el usuario lo pida.
+2. **Cierre Automático en \`contextbase/changelog.md\`:** Toda corrección, mejora o implementación debe registrarse antes de finalizar la respuesta usando \`contextbase_log\` o editando \`## Cambios Realizados\` con fecha y actualizando \`## Cambios por Hacer\`.
+3. **Gestión Automática en \`contextbase/tasklist.md\`:** Marcar con \`[x]\` las tareas completadas (\`contextbase_task\` con \`action: "done"\`) y registrar con \`[ ]\` cualquier nuevo pendiente (\`action: "add"\`).
+4. **Arquitectura en \`contextbase/fundamentos.md\`:** Ejecutar \`contextbase_sync\` o actualizar si hubo cambios en arquitectura, dependencias, scripts o reglas operativas.
+5. **Idioma:** Toda salida, bitácora y documentación debe mantenerse estrictamente en **español**.
+6. **Mantenimiento Preventivo Automático:** Al iniciar sesión y al cerrar cambios de dependencias, revisar \`contextbase/componentes.md\` y regenerarlo con \`contextbase_audit\` o \`contextbase audit\`.
 <!-- CONTEXTBASE:END -->`;
 
 /**
@@ -33,14 +33,11 @@ function injectRuleInFile(filePath) {
 
   let updatedContent;
   if (content.includes(startTag) && content.includes(endTag)) {
-    // Reemplazar bloque existente
     const regex = new RegExp(`${startTag}[\\s\\S]*?${endTag}`, 'g');
     updatedContent = content.replace(regex, CONTEXTBASE_RULE_BLOCK);
   } else if (content.trim().length > 0) {
-    // Agregar al final
     updatedContent = `${content.trim()}\n\n${CONTEXTBASE_RULE_BLOCK}\n`;
   } else {
-    // Archivo nuevo
     updatedContent = `${CONTEXTBASE_RULE_BLOCK}\n`;
   }
 
@@ -60,15 +57,18 @@ export function injectAgentRules(projectDir) {
     path.join(projectDir, '.windsurfrules')
   ];
 
-  // Si existe .gemini o .agents, también agregarlo allí
-  const geminiRules = path.join(projectDir, '.gemini', 'rules', 'contextbase.md');
-  const agentRules = path.join(projectDir, '.agents', 'rules', 'contextbase.md');
+  const optionalDirs = [
+    ['.gemini', path.join(projectDir, '.gemini', 'rules', 'contextbase.md')],
+    ['.agents', path.join(projectDir, '.agents', 'rules', 'contextbase.md')],
+    ['.kilo', path.join(projectDir, '.kilo', 'rules', 'contextbase.md')],
+    ['.kilocode', path.join(projectDir, '.kilocode', 'rules', 'contextbase.md')],
+    ['.opencode', path.join(projectDir, '.opencode', 'rules', 'contextbase.md')]
+  ];
 
-  if (fs.existsSync(path.join(projectDir, '.gemini'))) {
-    targetFiles.push(geminiRules);
-  }
-  if (fs.existsSync(path.join(projectDir, '.agents'))) {
-    targetFiles.push(agentRules);
+  for (const [dirName, rulePath] of optionalDirs) {
+    if (fs.existsSync(path.join(projectDir, dirName))) {
+      targetFiles.push(rulePath);
+    }
   }
 
   const injected = [];
@@ -76,9 +76,7 @@ export function injectAgentRules(projectDir) {
     try {
       injectRuleInFile(file);
       injected.push(path.relative(projectDir, file).replace(/\\/g, '/'));
-    } catch {
-      // Ignorar fallos individuales de permisos
-    }
+    } catch {}
   }
 
   return injected;

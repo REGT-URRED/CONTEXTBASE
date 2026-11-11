@@ -27,7 +27,7 @@ const RULES = [
     } },
 ];
 
-const SKIP = /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.min\.js|\.map)$/i;
+const SKIP = /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.min\.js|\.map|(?:^|\/)(?:kilo|opencode)\.jsonc?|(?:^|\/)\.mcp\.json|(?:^|\/)\.(?:opencode|kilo|kilocode)\/)/i;
 
 const CODE_FILE = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|ps1|css|scss|less|html|vue|svelte)$/i;
 const COMMENT = /^\+\s*(\/\/|\/\*|\*|#|<!--|--\s)/;

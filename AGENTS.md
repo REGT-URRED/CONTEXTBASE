@@ -1,15 +1,15 @@
 # Instrucciones para Agentes de Código
 
 <!-- CONTEXTBASE:START -->
-<!-- CONTEXTBASE:v1.4.0 -->
+<!-- CONTEXTBASE:v1.5.0 -->
 ## Memoria Persistente y Bitácora del Proyecto (contextbase)
-Este proyecto utiliza un sistema de memoria técnica persistente en la carpeta `contextbase/`.
+Este proyecto utiliza un sistema automático de memoria técnica persistente en la carpeta `contextbase/`.
 
-### Regla Crítica de Actualización (Obligatoria para Agentes de Código):
-Toda futura corrección, mejora, alteración o nueva implementación en el código debe incluir **SIEMPRE**, como paso final y obligatorio, la actualización de los registros dentro de la carpeta `contextbase/`:
-1. **`contextbase/changelog.md`**: Documentar metódicamente el cambio en `## Cambios Realizados` con fecha y actualizar `## Cambios por Hacer`.
-2. **`contextbase/tasklist.md`**: Marcar con `[x]` las tareas completadas y registrar con `[ ]` cualquier nueva tarea o requerimiento pendiente.
-3. **`contextbase/fundamentos.md`**: Actualizar si hubo modificaciones en arquitectura, dependencias, scripts o reglas operativas.
-4. **Idioma**: Toda salida, bitácora y documentación debe mantenerse estrictamente en **español**.
-5. **Mantenimiento Preventivo Automático**: Al iniciar un proyecto o sesión y como verificación final al cerrar cada cambio, revisar `contextbase/componentes.md` (inventario, versiones instaladas y brechas de seguridad); regenerarlo con `contextbase audit`. Delegar en la CLI: no saturar las instrucciones con reglas adicionales.
+### Protocolo Automático Obligatorio para Agentes (OpenCode, Kilo, Claude, Cursor, Windsurf):
+1. **Inicio Automático de Sesión:** Al comenzar cualquier tarea o turno sin contexto previo, consultar inmediatamente `contextbase_context` (vía MCP) o leer `contextbase/strands/context.json` sin esperar a que el usuario lo pida.
+2. **Cierre Automático en `contextbase/changelog.md`:** Toda corrección, mejora o implementación debe registrarse antes de finalizar la respuesta usando `contextbase_log` o editando `## Cambios Realizados` con fecha y actualizando `## Cambios por Hacer`.
+3. **Gestión Automática en `contextbase/tasklist.md`:** Marcar con `[x]` las tareas completadas (`contextbase_task` con `action: "done"`) y registrar con `[ ]` cualquier nuevo pendiente (`action: "add"`).
+4. **Arquitectura en `contextbase/fundamentos.md`:** Ejecutar `contextbase_sync` o actualizar si hubo cambios en arquitectura, dependencias, scripts o reglas operativas.
+5. **Idioma:** Toda salida, bitácora y documentación debe mantenerse estrictamente en **español**.
+6. **Mantenimiento Preventivo Automático:** Al iniciar sesión y al cerrar cambios de dependencias, revisar `contextbase/componentes.md` y regenerarlo con `contextbase_audit` o `contextbase audit`.
 <!-- CONTEXTBASE:END -->

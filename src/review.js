@@ -9,7 +9,7 @@ const PROMPT_DIR = path.join(__dirname, 'prompts');
 const LIMITS = { maxFiles: 20, maxDiffChars: 120000, maxFileChars: 4000 };
 
 // Mismo patron que src/slop.js: no se importa desde ahi porque slop importa este modulo.
-const SKIP = /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.min\.js|\.map)$/i;
+const SKIP = /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.min\.js|\.map|(?:^|\/)(?:kilo|opencode)\.jsonc?|(?:^|\/)\.mcp\.json|(?:^|\/)\.(?:opencode|kilo|kilocode)\/)/i;
 
 function readPrompt(file) {
   return fs.readFileSync(path.join(PROMPT_DIR, file), 'utf8').replace(/^\uFEFF/, '').trim();

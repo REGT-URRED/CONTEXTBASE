@@ -1,20 +1,20 @@
 {
   "files": {
     "AGENTS.md": {
-      "hash": "dd80e29de2e8680062cc3dba887df1f00216e260b3e188b9eb6d4791141dcdce",
-      "mtime": "2026-11-02T23:15:52.928Z"
+      "hash": "b06290eae6065575805980e8eae521f09b14c485fd17358d057cfca26e786573",
+      "mtime": "2026-11-11T19:10:52.505Z"
     },
     "CLAUDE.md": {
-      "hash": "ba21ab5fc63d27051e91cb8690ac14070627d2c5c27689f680614d574a14d765",
-      "mtime": "2026-11-02T23:15:52.932Z"
+      "hash": "3a4b7273abbeacab7f604d11e315ebad5f33e29b26464b1ef04ccf4104c61024",
+      "mtime": "2026-11-11T19:10:52.505Z"
     },
     ".cursorrules": {
-      "hash": "ba21ab5fc63d27051e91cb8690ac14070627d2c5c27689f680614d574a14d765",
-      "mtime": "2026-11-02T23:15:52.932Z"
+      "hash": "3a4b7273abbeacab7f604d11e315ebad5f33e29b26464b1ef04ccf4104c61024",
+      "mtime": "2026-11-11T19:10:52.505Z"
     },
     ".windsurfrules": {
-      "hash": "ba21ab5fc63d27051e91cb8690ac14070627d2c5c27689f680614d574a14d765",
-      "mtime": "2026-11-02T23:15:52.932Z"
+      "hash": "3a4b7273abbeacab7f604d11e315ebad5f33e29b26464b1ef04ccf4104c61024",
+      "mtime": "2026-11-11T19:10:52.505Z"
     },
     ".gemini/rules/contextbase.md": {
       "hash": null,

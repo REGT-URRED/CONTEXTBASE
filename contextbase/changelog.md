@@ -5,6 +5,7 @@ Registro metódico del progreso técnico, decisiones de arquitectura y evolució
 ---
 
 ## Cambios Realizados
+- [2026-11-11] Release v1.5.0: automatización integral cero-intervención para OpenCode, Kilo Code, Claude Code, Cursor y Windsurf (`src/autoconfig.js`, `src/watcher.js`, plugins `contextbase-auto.js`, hooks de ciclo de vida, MCP resources/prompts con cola FIFO y `postinstall` global)
 - [2026-11-02] Release v1.4.0: autonomia total, Strands Python, MCP completo (24 tools), export JSON/HTML y baseline autorreparable
 - [2026-11-02] Ajuste: salida de Strands silenciosa por defecto (CONTEXTBASE_VERBOSE=1 para diagnostico)
 - [2026-11-02] v1.4.0: version de exportacion derivada de package.json (OWN_VERSION) y conteo exacto de 24 tools en la prueba MCP

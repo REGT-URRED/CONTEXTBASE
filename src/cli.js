@@ -9,13 +9,9 @@ import { runMaintenance } from './maintenance.js';
 import { writeAtomic, withLock } from './fsutil.js';
 import { appendEntry, archiveBody } from './changelog.js';
 import { collectState, buildDigest, evaluateHealth } from './context.js';
-import { installGitHook } from './hooks.js';
+import { installGitHook, runLifecycleHook } from './hooks.js';
 import { runExtra } from './cli_extra.js';
-import { detectCli } from './detect.js';
-import { getRegistry, setEnabled } from './registry.js';
-import { check as guardCheck, repair as guardRepair, refreshBaseline, REPAIR_ALLOWLIST } from './guard.js';
-import * as snapshot from './snapshot.js';
-import { recommend as bootstrapRecommend, preview as bootstrapPreview, run as bootstrapRun } from './bootstrap.js';
+import { refreshBaseline } from './guard.js';
 import { startMcpServer } from './mcp.js';
 import * as review from './review.js';
 import * as redundancy from './redundancy.js';
@@ -23,6 +19,8 @@ import * as slop from './slop.js';
 import * as exp from './export.js';
 import { autoEnsure, refreshStrands } from './auto.js';
 import { prepareStrandsContext } from './strands.js';
+import { autoConfigureProject, autoConfigureGlobal } from './autoconfig.js';
+import { startWatcher, startDaemonWatcher, stopDaemonWatcher, statusDaemonWatcher, syncWorkspaceChanges } from './watcher.js';
 
 // Estilos ANSI sin dependencias
 const c = {
@@ -56,27 +54,27 @@ function showHelp() {
   console.log(`${c.bold}USO:${c.reset}`);
   console.log(`  ${c.green}contextbase${c.reset} [comando] [opciones]\n`);
   console.log(`${c.bold}COMANDOS PRINCIPALES:${c.reset}`);
-  console.log(`  ${c.cyan}init${c.reset}                  Inicializa contextbase en el proyecto actual.`);
-  console.log(`                        Ejecuta escaneo profundo, crea fundamentos.md, changelog.md,`);
-  console.log(`                        tasklist.md e inyecta reglas universales para agentes.`);
+  console.log(`  ${c.cyan}init${c.reset}                  Inicializa contextbase y autoconfigura todos los agentes.`);
+  console.log(`  ${c.cyan}auto${c.reset} | ${c.cyan}setup${c.reset}          Configura ejecución 100% automática (MCP, plugins, permisos, hooks).`);
+  console.log(`  ${c.cyan}watch${c.reset} [start|stop|status] Observador en segundo plano que sincroniza cambios en tiempo real.`);
   console.log(`  ${c.cyan}status${c.reset} | ${c.cyan}check${c.reset}        Muestra el estado visual de la memoria y tareas.`);
   console.log(`  ${c.cyan}pack${c.reset} [archivo]        Empaqueta el código fuente estilo Repomix en un solo archivo.`);
   console.log(`  ${c.cyan}audit${c.reset}               Regenera el inventario de componentes y verifica brechas de seguridad (componentes.md).`);
   console.log(`  ${c.cyan}dump${c.reset}                  Vuelca el contenido completo de contextbase en pantalla.`);
-  console.log(`  ${c.cyan}install-skill${c.reset}         Instala la Skill de ContextBase en el directorio global.`);
+  console.log(`  ${c.cyan}install-skill${c.reset}         Instala la Skill y plugins de ContextBase en los directorios globales.`);
   console.log(`  ${c.cyan}log${c.reset} <mensaje> [--scope=name|--worktree]  Registra cambio (global o namespaced por worktree).`);
   console.log(`  ${c.cyan}task add${c.reset} <descripción> Añade una nueva tarea pendiente [ ] a tasklist.md.`);
   console.log(`  ${c.cyan}task done${c.reset} <texto>      Marca una tarea como completada [x] en tasklist.md.`);
   console.log(`  ${c.cyan}task list${c.reset}             Lista todas las tareas actuales.\n`);
   console.log(`  ${c.cyan}context${c.reset} [--json]      Digest compacto para iniciar sesion (<=2k tokens).`);
-  console.log(`  ${c.cyan}sync${c.reset}                  Sincroniza bloque tecnico de fundamentos.md y reglas de agente.`);
+  console.log(`  ${c.cyan}sync${c.reset}                  Sincroniza bloque tecnico de fundamentos.md, arbol de trabajo y reglas.`);
   console.log(`  ${c.cyan}hook${c.reset} [install|remove] Autoguardado: post-commit registra cada commit en changelog.md.`);
-  console.log(`  ${c.cyan}mcp${c.reset}                   Servidor MCP sobre stdio (tools para agentes compatibles).`);
-  console.log(`  ${c.cyan}review${c.reset} [base] [--intent "..."]  Paquete de revision tipo thermos: diff + contenidos + 2 prompts; --intent describe el alcance para los revisores.`);
+  console.log(`  ${c.cyan}mcp${c.reset}                   Servidor MCP sobre stdio (tools, resources, prompts y watcher activo).`);
+  console.log(`  ${c.cyan}review${c.reset} [base] [--intent "..."]  Paquete de revision tipo thermos: diff + contenidos + 2 prompts.`);
   console.log(`  ${c.cyan}review prompts${c.reset}                  Solo los dos prompts de revisor.`);
   console.log(`  ${c.cyan}review merge${c.reset} <a.md> <b.md>      Fusiona exactamente dos reportes y marca coincidencias.`);
   console.log(`  ${c.cyan}redundancy${c.reset} [--json]             Detecta skills principales y duplicados, referencias rotas y MCP repetidos.`);
-  console.log(`  ${c.cyan}slop${c.reset} [base] [--json]            Delivery gate antislop sobre el arbol de trabajo contra <base> (base inferida si se omite).`);
+  console.log(`  ${c.cyan}slop${c.reset} [base] [--json]            Delivery gate antislop sobre el arbol de trabajo contra <base>.`);
   console.log(`  ${c.cyan}export${c.reset} <estado|digest> [json|html] [archivo]  Exporta estado o digest en JSON/HTML.`);
   console.log(`  ${c.cyan}status --json${c.reset}         Estado estructurado para agentes y CI.`);
   console.log(`  ${c.cyan}bootstrap${c.reset}            Bootstrap del entorno de agentes (detecta/instala/init/snapshot).`);
@@ -90,14 +88,6 @@ function showHelp() {
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);
   console.log(`  ${c.yellow}--pack${c.reset}                Genera también contextbase-pack.txt durante la inicialización.\n`);
-  console.log(`${c.bold}EJEMPLOS:${c.reset}`);
-  console.log(`  contextbase init`);
-  console.log(`  contextbase status`);
-  console.log(`  contextbase log "Refactorización de módulo de autenticación"`);
-  console.log(`  contextbase task add "Implementar tests unitarios para scanner"`);
-  console.log(`  contextbase task done "scanner"`);
-  console.log(`  contextbase pack\n`);
-  console.log(`  contextbase export estado json reporte.json`);
 }
 
 /**
@@ -132,6 +122,7 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
   // Paso 3: Generación de documentos
   console.log(`\n${c.cyan}[3/6] Generación y Poblado de Documentos:${c.reset}`);
   const result = writeContextBase(targetDir, analysis, { force: options.force });
+  try { syncFundamentos(targetDir, analysis); } catch {}
   for (const f of result.filesWritten) {
     console.log(`      ${c.green}✓ Generado:${c.reset} ${f}`);
   }
@@ -149,20 +140,32 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
     console.log(`      ${c.gray}Nota: mantenimiento preventivo omitido (${e.message})${c.reset}`);
   }
 
-  // Paso 4: Inyección de reglas para agentes de código
-  console.log(`\n${c.cyan}[4/6] Inyección de Directivas para Agentes de Código:${c.reset}`);
+  // Paso 4: Autoconfiguración de Agentes (OpenCode, Kilo, Claude, Cursor) y Reglas
+  console.log(`\n${c.cyan}[4/6] Autoconfiguración de Agentes (OpenCode, Kilo, Claude, Cursor) y Reglas:${c.reset}`);
+  try {
+    const autoCfg = autoConfigureProject(targetDir, options);
+    for (const af of autoCfg.files) {
+      console.log(`      ${c.green}✓ Configurado automáticamente:${c.reset} ${af}`);
+    }
+  } catch {}
   const rulesUpdated = injectAgentRules(targetDir);
   for (const r of rulesUpdated) {
     console.log(`      ${c.green}✓ Regla de actualización obligatoria inyectada en:${c.reset} ${r}`);
   }
+  try {
+    if (fs.existsSync(path.join(targetDir, '.git'))) {
+      const hk = installGitHook(targetDir, 'install');
+      if (hk.ok) console.log(`      ${c.green}✓ ${hk.message}${c.reset}`);
+    }
+  } catch {}
   try { refreshBaseline(targetDir); } catch {}
 
-  // Paso 5: Instalación global de la skill para agentes
-  console.log(`\n${c.cyan}[5/6] Disponibilidad Universal de Skill:${c.reset}`);
+  // Paso 5: Instalación global de la skill y plugins para agentes
+  console.log(`\n${c.cyan}[5/6] Disponibilidad Universal de Skill y Plugins:${c.reset}`);
   try {
-    const installed = installSkill('global');
+    const installed = installSkill('all', targetDir);
     for (const inst of installed) {
-      console.log(`      ${c.green}✓ Skill disponible globalmente en:${c.reset} ${inst}`);
+      console.log(`      ${c.green}✓ Skill disponible en:${c.reset} ${inst}`);
     }
   } catch (e) {
     console.log(`      ${c.gray}Nota: No se pudo instalar la skill global (${e.message})${c.reset}`);
@@ -184,8 +187,8 @@ export async function runInit(targetDir = process.cwd(), options = {}) {
     console.log(`      ${c.green}✓ Repositorio empaquetado en:${c.reset} contextbase-pack.txt`);
   }
 
-  console.log(`\n${c.green}${c.bold}✨ ¡ContextBase inicializado y completamente funcional!${c.reset}`);
-  console.log(`${c.dim}Cualquier agente de código ahora actualizará contextbase/ de forma obligatoria tras cada cambio.${c.reset}\n`);
+  console.log(`\n${c.green}${c.bold}✨ ¡ContextBase inicializado y 100% automatizado!${c.reset}`);
+  console.log(`${c.dim}OpenCode, Kilo Code, Claude Code y demás agentes ahora operan de forma automática sin requerir comandos manuales.${c.reset}\n`);
 }
 
 /**
@@ -210,7 +213,6 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
 
   console.log(`${c.bold}ESTADO DE LA MEMORIA TÉCNICA (${targetDir}):${c.reset}\n`);
 
-  // Archivos presentes
   const files = [
     { name: 'fundamentos.md', path: fundamentosPath },
     { name: 'changelog.md', path: changelogPath },
@@ -228,7 +230,6 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
     }
   }
 
-  // Vigencia del informe de mantenimiento preventivo
   if (fs.existsSync(componentesPath)) {
     const dias = Math.floor((Date.now() - fs.statSync(componentesPath).mtimeMs) / 86400000);
     if (dias > 7) {
@@ -240,7 +241,6 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
 
   console.log(`\n${c.bold}SWARM:${c.reset} orquestacion real por worktrees. Ver: ${c.cyan}contextbase swarm status${c.reset}`);
 
-  // Tareas
   if (fs.existsSync(tasklistPath)) {
     const content = fs.readFileSync(tasklistPath, 'utf8');
     const doneCount = (content.match(/\[x\]/gi) || []).length;
@@ -488,6 +488,83 @@ export async function cli(args = process.argv.slice(2)) {
     return;
   }
 
+  if (command === 'hook-run') {
+    const evt = args[1] || 'session-start';
+    const extra = args.slice(2);
+    const out = await runLifecycleHook(evt, process.cwd(), extra);
+    if (out) process.stdout.write(String(out) + '\n');
+    return;
+  }
+
+  if (command === 'auto' || command === 'setup') {
+    const silent = args.includes('--silent') || args.includes('-s');
+    const globalOnly = args.includes('--global');
+    const isJson = args.includes('--json');
+
+    let globalFiles = [];
+    try {
+      globalFiles = installSkill('global', process.cwd());
+      globalFiles.push(...autoConfigureGlobal({ forceGlobal: globalOnly }));
+    } catch {}
+
+    if (globalOnly) {
+      if (isJson) console.log(JSON.stringify({ ok: true, globalFiles }, null, 2));
+      else if (!silent) console.log(`${c.green}✓ Entorno global autoconfigurado (${globalFiles.length} rutas).${c.reset}`);
+      return;
+    }
+
+    const ensured = autoEnsure(process.cwd(), { autoConfig: true, installSkill: true });
+    const projCfg = autoConfigureProject(process.cwd(), { includeAll: args.includes('--all') });
+    const wsSync = syncWorkspaceChanges(process.cwd());
+
+    if (args.includes('--daemon') || args.includes('--watch')) {
+      const dm = startDaemonWatcher(process.cwd());
+      ensured.daemon = dm;
+    }
+
+    if (isJson) {
+      console.log(JSON.stringify({ ok: true, ensured, configured: projCfg.files, synced: wsSync, globalFiles }, null, 2));
+    } else if (!silent) {
+      banner();
+      console.log(`${c.green}✓ Automatización completa activada en:${c.reset} ${process.cwd()}`);
+      console.log(`  - Archivos de agentes configurados: ${projCfg.files.join(', ')}`);
+      console.log(`  - Skills y plugins globales sincronizados: ${globalFiles.length}`);
+      if (ensured.daemon) console.log(`  - Watcher en segundo plano activo (PID: ${ensured.daemon.pid})`);
+      console.log('');
+    }
+    return;
+  }
+
+  if (command === 'watch' || command === 'daemon') {
+    await ensureContextBase(process.cwd(), true);
+    const sub = args[1] || (args.includes('--foreground') ? 'foreground' : 'start');
+    if (sub === 'stop') {
+      const r = stopDaemonWatcher(process.cwd());
+      console.log(r.stopped ? `${c.green}✓ Watcher detenido (PID ${r.pid}).${c.reset}` : `${c.gray}No había watcher en ejecución.${c.reset}`);
+      return;
+    }
+    if (sub === 'status') {
+      const r = statusDaemonWatcher(process.cwd());
+      if (args.includes('--json')) console.log(JSON.stringify(r, null, 2));
+      else console.log(r.running ? `${c.green}● Watcher activo (PID ${r.pid}, desde ${r.startedAt}).${c.reset}` : `${c.yellow}○ Watcher inactivo.${c.reset}`);
+      return;
+    }
+    if (sub === 'foreground' || args.includes('--foreground')) {
+      const watcher = startWatcher(process.cwd(), { unref: false, pollMs: 3000 });
+      if (!args.includes('--silent')) {
+        console.log(`${c.cyan}👁 ContextBase Watcher activo en ${process.cwd()} (Ctrl+C para detener)...${c.reset}`);
+      }
+      process.on('SIGINT', () => { watcher.close(); process.exit(0); });
+      process.on('SIGTERM', () => { watcher.close(); process.exit(0); });
+      await new Promise(() => {});
+      return;
+    }
+    const r = startDaemonWatcher(process.cwd());
+    if (args.includes('--json')) console.log(JSON.stringify(r, null, 2));
+    else console.log(`${c.green}✓ Watcher iniciado en segundo plano (PID ${r.pid}).${c.reset}`);
+    return;
+  }
+
   if (command === 'init') {
     const force = args.includes('--force');
     const pack = args.includes('--pack');
@@ -512,8 +589,10 @@ export async function cli(args = process.argv.slice(2)) {
     const analysis = analyzeProject(process.cwd());
     const updated = syncFundamentos(process.cwd(), analysis);
     const rules = injectAgentRules(process.cwd());
+    const ws = syncWorkspaceChanges(process.cwd());
     try { refreshBaseline(process.cwd()); } catch {}
     if (updated) console.log(`${c.green}✓ Bloque técnico sincronizado en:${c.reset} contextbase/fundamentos.md`);
+    if (ws.synced && ws.files.length > 0) console.log(`${c.green}✓ Árbol de trabajo sincronizado:${c.reset} ${ws.files.join(', ')}`);
     console.log(`${c.green}✓ Reglas de agente reinyectadas en:${c.reset} ${rules.join(', ')}`);
     const st = collectState(process.cwd());
     if (!st.files['componentes.md'].exists || st.files['componentes.md'].days > 7) {
@@ -536,7 +615,7 @@ export async function cli(args = process.argv.slice(2)) {
     const clean = [];
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === '--intent') { intent = rest[++i] || ''; continue; }
-    if (rest[i] === '--json') { clean.push('--json'); continue; }
+      if (rest[i] === '--json') { clean.push('--json'); continue; }
       clean.push(rest[i]);
     }
     if (clean[0] === 'prompts') { console.log(review.promptsText()); return; }
@@ -569,7 +648,6 @@ export async function cli(args = process.argv.slice(2)) {
     process.exitCode = r.findings.length > 0 ? 1 : 0;
     return;
   }
-
 
   if (command === 'export') {
     const type = args[1] || 'estado';
@@ -625,7 +703,7 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'install-skill') {
-    const installed = installSkill('global');
+    const installed = installSkill('all', process.cwd());
     console.log(`${c.green}✓ Skill instalada en:${c.reset}\n${installed.join('\n')}`);
     return;
   }
@@ -653,7 +731,6 @@ export async function cli(args = process.argv.slice(2)) {
 
   if (await runExtra(command, args, process.cwd())) return;
 
-  // Si no se reconoce el comando pero no empieza con guion, intentar init o mostrar ayuda
   console.log(`${c.red}Comando no reconocido: ${command}${c.reset}\n`);
   showHelp();
 }

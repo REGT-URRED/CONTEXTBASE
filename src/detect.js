@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { readJsonc } from './redundancy.js';
 
 const CLI_ALIASES = {
   opencode: 'opencode',
   'claude-code': 'claude',
   claude: 'claude',
   kilo: 'kilo',
+  kilocode: 'kilo',
   cursor: 'cursor',
   windsurf: 'windsurf',
   gemini: 'gemini'
@@ -31,17 +33,21 @@ export function findOnPath(bin) {
   return false;
 }
 
-function mcpConfigPaths(cli) {
-  const h = home();
-  const c = cwd();
+export function mcpConfigPaths(cli, customCwd = cwd(), customHome = home()) {
+  const h = customHome;
+  const c = customCwd;
   const key = CLI_ALIASES[String(cli || '').toLowerCase()] || String(cli || '').toLowerCase();
   const paths = {
     opencode: [
       path.join(h, '.config', 'opencode', 'opencode.json'),
+      path.join(h, '.config', 'opencode', 'opencode.jsonc'),
       path.join(h, '.config', 'opencode', 'config.json'),
       path.join(h, '.opencode', 'config.json'),
+      path.join(c, '.opencode', 'opencode.json'),
+      path.join(c, '.opencode', 'opencode.jsonc'),
       path.join(c, '.opencode', 'config.json'),
-      path.join(c, 'opencode.json')
+      path.join(c, 'opencode.json'),
+      path.join(c, 'opencode.jsonc')
     ],
     claude: [
       path.join(h, '.claude.json'),
@@ -51,9 +57,16 @@ function mcpConfigPaths(cli) {
       path.join(c, '.claude', 'settings.json')
     ],
     kilo: [
+      path.join(h, '.config', 'kilo', 'kilo.json'),
+      path.join(h, '.config', 'kilo', 'kilo.jsonc'),
       path.join(h, '.config', 'kilo', 'config.json'),
       path.join(h, '.kilocode', 'config.json'),
-      path.join(c, '.kilo', 'config.json')
+      path.join(c, '.kilo', 'kilo.json'),
+      path.join(c, '.kilo', 'kilo.jsonc'),
+      path.join(c, '.kilo', 'config.json'),
+      path.join(c, '.kilocode', 'mcp.json'),
+      path.join(c, 'kilo.json'),
+      path.join(c, 'kilo.jsonc')
     ],
     cursor: [
       path.join(h, '.cursor', 'mcp.json'),
@@ -71,12 +84,11 @@ function mcpConfigPaths(cli) {
   return paths[key] || [];
 }
 
-export function readMcpConfig(cli) {
-  for (const full of mcpConfigPaths(cli)) {
+export function readMcpConfig(cli, customCwd = cwd(), customHome = home()) {
+  for (const full of mcpConfigPaths(cli, customCwd, customHome)) {
     try {
       if (!fs.existsSync(full)) continue;
-      const raw = fs.readFileSync(full, 'utf8');
-      const parsed = JSON.parse(raw);
+      const parsed = readJsonc(full);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
       if (Array.isArray(parsed)) return { items: parsed };
     } catch {}
@@ -84,16 +96,16 @@ export function readMcpConfig(cli) {
   return null;
 }
 
-export function detectCli() {
+export function detectCli(customCwd = cwd(), customHome = home()) {
   const specs = [
     { name: 'OpenCode', priority: 1, bins: ['opencode'], configCli: 'opencode' },
     { name: 'Claude Code', priority: 2, bins: ['claude'], configCli: 'claude' },
-    { name: 'Kilo', priority: 3, bins: ['kilo'], configCli: 'kilo' }
+    { name: 'Kilo', priority: 3, bins: ['kilo', 'kilocode'], configCli: 'kilo' }
   ];
   const all = [];
   for (const s of specs) {
     const binaryFound = s.bins.some(findOnPath);
-    const config = readMcpConfig(s.configCli);
+    const config = readMcpConfig(s.configCli, customCwd, customHome);
     all.push({ name: s.name, priority: s.priority, found: binaryFound || !!config });
   }
   const otherBins = ['cursor', 'windsurf', 'gemini', 'aider'];

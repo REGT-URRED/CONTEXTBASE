@@ -5,6 +5,11 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] v1.5.0: Autoconfiguración real de agentes (`src/autoconfig.js`) para OpenCode (`opencode.json`), Kilo Code (`kilo.json`), Claude Code (`.mcp.json` y `.claude/settings.json`), Cursor y Windsurf con permisos `contextbase_*` preaprobados
+- [x] v1.5.0: Plugin nativo automático `contextbase-auto.js` (`.opencode/plugins/` y `.kilo/plugins/`) con inyección de digest en `experimental.chat.system.transform`, captura de ediciones en `tool.execute.after` (incluyendo `todowrite`) y cierre automático en `session.idle`
+- [x] v1.5.0: Observador en tiempo real y demonio en segundo plano (`src/watcher.js`, `contextbase watch`) que sincroniza `fundamentos.md`, `changelog.md`, `tasklist.md`, `componentes.md` y `strands/`
+- [x] v1.5.0: Servidor MCP mejorado con cola secuencial FIFO, digest vivo en `initialize.result.instructions`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get` y watcher integrado
+- [x] v1.5.0: Soporte de `kilo` en swarm (`src/swarm-agents.js`), lectura JSONC y rutas completas en `src/detect.js`, e instalación universal de skills en `src/installer.js` + `postinstall`
 - [x] Salida de Strands silenciosa por defecto (`CONTEXTBASE_VERBOSE=1` para diagnostico), sin NativeCommandError en PowerShell
 - [x] v1.4.0: version de exportacion derivada de package.json (OWN_VERSION) y conteo exacto de 24 tools en la prueba MCP
 - [x] v1.4.0: `kilo.json` con permisos aprobados de una sola vez y MCP `contextbase`
@@ -30,8 +35,6 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] v1.3.1: release de GitHub con asset estable `contextbase.tgz` y README con la nueva via de instalacion
 - [x] npm descartado como canal de distribucion (cuenta `datersx` suspendida, nombre del paquete fuera de nuestro control)
 - [x] Commit y push del repo ContextBase 1.3.0 a GitHub (REGT-URRED/CONTEXTBASE)
-
-
 - [x] Creación de carpeta de memoria persistente `contextbase/`
 - [x] Generación de documento estructurado `fundamentos.md`
 - [x] Creación de bitácora histórica `changelog.md`
@@ -58,7 +61,6 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Verificadores Rust (`cargo audit`) y Go (`govulncheck`) en el mantenimiento preventivo
 - [x] Suite de 20 pruebas con `node:test`
 - [x] README orientado a npm (instalacion desde registro, quickstart, comandos, MCP, seguridad)
-
 - [x] v1.3.0: integracion de thermos en `src/review.js` + `src/prompts/review-security.md` y `review-quality.md` con modos prepare/prompts/merge
 - [x] v1.3.0: comandos CLI `review`, `review prompts`, `review merge` y `--intent`
 - [x] v1.3.0: `src/redundancy.js` y comando `redundancy` (skills duplicados, refs rotas, bloques AGENTS.md, MCP repetidos)
@@ -67,7 +69,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Verificados `review`, `slop`, `redundancy` y `review merge` en repo git real y en los cuatro casos de error
 - [x] Corregida similitud de fusion en `merge`: coeficiente de solapamiento sobre el conjunto menor, umbral 0.40 y minimo 2 terminos compartidos
 - [x] Pruebas de los tres modulos nuevos: `test/review.test.js`, `test/slop.test.js`, `test/redundancy.test.js`
-- [x] Suite completa en verde: 60 casos, 60 aprobados, 0 fallidos
+- [x] Suite completa en verde: 81 casos, 81 aprobados, 0 fallidos
 - [x] `review` y `slop` cubren el arbol de trabajo y los archivos sin seguimiento
 - [x] Codigos de salida: `slop` devuelve 1 con hallazgos y 0 sin hallazgos; `review merge` falla con exit 1 fuera de dos reportes
 - [x] `redundancy` informa familias principales y escanea `node_modules`, `plugins` y npm global

@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { agentInfo, buildLauncher, mintSessionId } from '../src/swarm-agents.js';
 
@@ -8,8 +8,9 @@ test('mintSessionId produce un id con prefijo ses y solo [a-z0-9_]', () => {
   assert.ok(id.includes('w1'));
 });
 
-test('agentInfo declara no soportado a un cli sin contrato verificado', () => {
+test('agentInfo declara soportados a opencode y kilo, y no soportado a un cli sin contrato verificado', () => {
   assert.equal(agentInfo('opencode').supported, true);
+  assert.equal(agentInfo('kilo').supported, true);
   const claude = agentInfo('claude');
   assert.equal(claude.supported, false);
   assert.match(claude.reason, /not verified/i);
