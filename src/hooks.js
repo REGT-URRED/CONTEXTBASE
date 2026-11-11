@@ -153,6 +153,17 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
     autoEnsure(root, { deps });
   } catch {}
 
+  // Autogestion: cierra terminales de agente cuyo trabajo ya termino (solo workers de este proyecto).
+  if (!process.env.NODE_TEST_CONTEXT) {
+    try {
+      const terms = await import('./terminals.js');
+      const closed = await terms.autoCloseFinished(root);
+      if (closed.closed && closed.closed.length) {
+        console.error('[ContextBase] terminales cerradas automaticamente: ' + closed.closed.map(x => x.pid + ' (' + x.agent + ')').join(', '));
+      }
+    } catch {}
+  }
+
   if (evt === 'session-start' || evt === 'digest') {
     const state = collectState(root);
     const baseDigest = buildDigest(state, readOwnVersion());

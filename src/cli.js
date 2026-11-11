@@ -707,6 +707,27 @@ export async function cli(args = process.argv.slice(2)) {
     return;
   }
 
+  if (command === 'strands') {
+    const sub = args[1] || 'sdk';
+    if (sub !== 'sdk') {
+      console.error(`${c.red}Error: subcomando de strands no soportado: ${sub} (usa: strands sdk)${c.reset}`);
+      process.exitCode = 2;
+      return;
+    }
+    const mode = args.includes('--install') ? 'install' : args.includes('--auto') ? 'auto' : 'status';
+    const { ensureStrandsSdk } = await import('./strands.js');
+    const res = ensureStrandsSdk(process.cwd(), { mode });
+    if (args.includes('--json')) { console.log(JSON.stringify(res, null, 2)); }
+    else {
+      console.log(`${c.bold}SDK de Strands:${c.reset} ${res.installed ? c.green + 'instalado' : c.yellow + 'no instalado'}${res.version ? ' (v' + res.version + ')' : ''} | accion: ${res.action}`);
+      if (!res.installed && res.reason) console.log(`  ${c.dim}${res.reason}${c.reset}`);
+      if (res.log) console.log(`  ${c.dim}log de instalacion: ${res.log}${c.reset}`);
+      if (res.action === 'scheduled') console.log(`  ${c.dim}instalacion lanzada en segundo plano (pid ${res.pid}); se registra en contextbase/strands/sdk.json${c.reset}`);
+    }
+    if (res.action === 'failed' || res.action === 'disabled') process.exitCode = 1;
+    return;
+  }
+
   if (command === 'mcp') {
     await startMcpServer(process.cwd());
     return;

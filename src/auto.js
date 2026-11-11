@@ -6,7 +6,7 @@ import { runMaintenance } from './maintenance.js';
 import { injectAgentRules, CONTEXTBASE_VERSION } from './rules.js';
 import { refreshBaseline } from './guard.js';
 import { installSkill } from './installer.js';
-import { prepareStrandsContext } from './strands.js';
+import { prepareStrandsContext, ensureStrandsSdk } from './strands.js';
 import { autoConfigureProject, ensureGitExclude, hasStaleAgentConfig } from './autoconfig.js';
 import { installGitHook } from './hooks.js';
 import { autoPulseWeb } from './web.js';
@@ -73,9 +73,34 @@ export function refreshStrands(projectDir) {
   try {
     if (!strandsStale(root)) return false;
     prepareStrandsContext(root);
+    scheduleStrandsSdk(root);
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Autogestion del SDK de Strands: si falta, se instala en segundo plano (no bloquea)
+ * y se deja constancia en contextbase/strands/sdk.json. No reintenta mas de una vez
+ * cada 30 minutos y se desactiva con CONTEXTBASE_STRANDS_AUTOINSTALL=0.
+ */
+export function scheduleStrandsSdk(projectDir) {
+  const root = resolveProject(projectDir);
+  if (isTestEnv()) return null;
+  if (process.env.CONTEXTBASE_STRANDS_AUTOINSTALL === '0') return null;
+  const stateFile = path.join(root, 'contextbase', 'strands', 'sdk.json');
+  try {
+    const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : {};
+    const last = Date.parse(state.lastAttempt || '') || 0;
+    if (Date.now() - last < 1800000) return state;
+    const res = ensureStrandsSdk(root, { mode: 'auto' });
+    const record = { lastAttempt: new Date().toISOString(), action: res.action, installed: Boolean(res.installed), version: res.version || null, log: res.log || null };
+    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify(record, null, 2) + '\n', 'utf8');
+    return record;
+  } catch {
+    return null;
   }
 }
 

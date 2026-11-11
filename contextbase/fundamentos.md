@@ -77,6 +77,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Códigos de salida:** `0` éxito, `1` error de ejecución, `2` error de uso (subcomando/flag/argumento inválido).
 - **Configuración de usuario (global y proyecto):** un archivo existente que no parsea NUNCA se sobrescribe; se deja backup `.bak-contextbase` y se reporta con `[ContextBase Error] code=CONFIG_INVALID_JSON`. Los `.jsonc` existentes (Kilo/OpenCode) se fusionan quirúrgicamente preservando comentarios, con precedencia sobre el `.json`.
 - **Guard de pruebas:** toda ruta que pueda lanzar procesos de agente (swarm/web/auto/hooks/watcher) está inerte bajo `NODE_TEST_CONTEXT`; `node --test` debe terminar solo y en segundos.
+- **Autogestión (sin intervención manual):** ContextBase cierra automáticamente las terminales de sus propios workers cuando el trabajo terminó (`done`; `stale` solo con `--include-stale`), registra el SDK de Strands en `contextbase/strands/sdk.json` y lo instala en segundo plano si falta (`CONTEXTBASE_STRANDS_AUTOINSTALL=0` lo desactiva). El runner `strands_runner.py` degrada sin traza: modo seco sin SDK (salida 0) y modo degradado sin credenciales de proveedor (salida 3).
 - **Control de terminales:** `terminals list` (solo lectura), `terminals close <pid...|all> [--yes] [--force]` (dry-run por defecto, nunca cierra el árbol propio ni procesos no identificados como agentes), `terminals send <pid> --message "..."` (por contrato nativo; no se inyectan teclas en TUIs ajenas).
 
 ---
@@ -87,7 +88,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Versión:** 1.5.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (67), Markdown (15), JSON (3)
+- **Lenguajes dominantes:** JavaScript (68), Markdown (15), JSON (3)
 - **Dependencias:** Sin dependencias externas registradas.
 - **Scripts:** start, postinstall, auto, watch, test, audit, mcp, pack:release, test:ci, release:github
 - **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test

@@ -183,6 +183,44 @@ export function nativeSendSpec(agent) {
   return null;
 }
 
+/**
+ * Cierra automaticamente las terminales de agente cuyo trabajo ya termino.
+ * Solo interviene sobre procesos ligados a workers de una corrida de ContextBase
+ * (pid o sesion registrados en el estado swarm/web) cuyo worker esta en 'done'.
+ * Nunca toca el arbol protegido ni terminales ajenas a este proyecto.
+ */
+export async function autoCloseFinished(cwd = process.cwd(), options = {}, deps = defaultDeps()) {
+  const { includeStale = false, dryRun = false } = options;
+  const result = { closed: [], skipped: [], candidates: [], reason: null };
+  let status;
+  try {
+    const swarm = await import('./swarm.js');
+    status = swarm.swarmStatus({ cwd });
+  } catch (err) {
+    result.reason = 'sin corridas activas en este proyecto';
+    return result;
+  }
+  const workers = (status.workers || []).filter(w => w.state === 'done' || (includeStale && w.state === 'stale'));
+  if (!workers.length) { result.reason = 'ningun worker con trabajo terminado'; return result; }
+  const live = listTerminals(cwd, deps);
+  for (const w of workers) {
+    const byPid = w.pid ? live.find(t => t.pid === Number(w.pid)) : null;
+    const bySession = w.session ? live.find(t => t.sessionId && t.sessionId === w.session) : null;
+    const target = byPid || bySession;
+    if (!target) { result.skipped.push({ worker: w.id, reason: 'sin proceso vivo (sesion ' + (w.session || 'n/a') + ')' }); continue; }
+    if (target.protected) { result.skipped.push({ worker: w.id, pid: target.pid, reason: 'protegido: arbol de la sesion actual' }); continue; }
+    result.candidates.push({ worker: w.id, pid: target.pid, agent: target.agent, session: target.sessionId });
+    if (dryRun) continue;
+    try {
+      deps.kill(target.pid, true);
+      result.closed.push({ worker: w.id, pid: target.pid, agent: target.agent });
+    } catch (err) {
+      result.skipped.push({ worker: w.id, pid: target.pid, reason: err.message });
+    }
+  }
+  return result;
+}
+
 export function sendToTerminal(pid, message, options = {}, deps = defaultDeps()) {
   const { cwd = process.cwd() } = options;
   if (!String(message || '').trim()) throw new Error('Uso: contextbase terminals send <pid> --message "..."');

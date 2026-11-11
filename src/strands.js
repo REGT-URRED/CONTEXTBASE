@@ -2,6 +2,7 @@
 // Genera archivos de Python con el contexto del proyecto para Strands.
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { collectState } from './context.js';
 import { analyzeProject } from './scanner.js';
 import { writeAtomic } from './fsutil.js';
@@ -294,7 +295,7 @@ export function generatePythonContext(state, analysis) {
 export function generateStrandsConfig() {
   const now = nowIso();
   const agentConfig = {
-    model: 'claude-3-5-sonnet-20241022',
+    model: process.env.CONTEXTBASE_STRANDS_MODEL || 'claude-3-5-sonnet-20241022',
     temperature: 0.2,
     max_tokens: 4096,
     system_prompt: 'Eres un agente Strands que trabaja sobre el proyecto contextbase. Usa project_context.py para mantener el contexto entre sesiones.',
@@ -543,9 +544,17 @@ export function generateStrandsRunner() {
   lines.push('        print(prompt)');
   lines.push('        print("")');
   lines.push('        print("[MODO SECO] SDK de Strands no instalado; se mostro el prompt completo.")');
+  lines.push('        print("ContextBase lo gestiona solo: \'contextbase strands sdk --install\' (o pip install strands-agents).")');
   lines.push('        return 0');
-  lines.push('    agent = Agent(model=AGENT_CONFIG.get("model"), system_prompt=SYSTEM_PROMPT)');
-  lines.push('    result = agent(prompt)');
+  lines.push('    try:');
+  lines.push('        agent = Agent(model=AGENT_CONFIG.get("model"), system_prompt=SYSTEM_PROMPT)');
+  lines.push('        result = agent(prompt)');
+  lines.push('    except Exception as err:');
+  lines.push('        print(prompt)');
+  lines.push('        print("")');
+  lines.push('        print("[MODO DEGRADADO] SDK de Strands disponible pero el proveedor de modelo no respondio: " + type(err).__name__ + ": " + str(err)[:300])');
+  lines.push('        print("Se mostro el prompt completo. Configura las credenciales del proveedor (p.ej. AWS para Bedrock) o fija el modelo con CONTEXTBASE_STRANDS_MODEL.")');
+  lines.push('        return 3');
   lines.push('    print(result)');
   lines.push('    return 0');
   lines.push('');
@@ -614,6 +623,53 @@ function generateReadme(state, analysis) {
   lines.push('');
   lines.push('Generado el ' + now + ' por ContextBase CLI.');
   return lines.join('\n') + '\n';
+}
+
+/**
+ * Gestion autonoma del SDK de Strands (Python).
+ * mode: 'status' (solo informe) | 'install' (instalacion sincrona) | 'auto' (instalacion en segundo plano, no bloquea).
+ * Se desactiva con CONTEXTBASE_STRANDS_AUTOINSTALL=0.
+ */
+export function ensureStrandsSdk(projectDir = process.cwd(), options = {}) {
+  const mode = options.mode || 'auto';
+  const python = options.python || process.env.CONTEXTBASE_PYTHON || 'python';
+  const timeoutMs = Number(options.timeoutMs || 300000);
+  const check = () => {
+    try {
+      const res = spawnSync(python, ['-c', 'import importlib.metadata as m;print(m.version("strands-agents"))'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+      if (res.status === 0) return { ok: true, installed: true, version: String(res.stdout || '').trim() };
+      return { ok: false, installed: false, reason: 'el interprete de Python no pudo importar strands' };
+    } catch (err) {
+      return { ok: false, installed: false, reason: err.message };
+    }
+  };
+  const current = check();
+  if (current.installed) return { ...current, action: 'none', python };
+  if (mode === 'status') return { ...current, action: 'none', python };
+  if (process.env.CONTEXTBASE_STRANDS_AUTOINSTALL === '0') return { ...current, action: 'disabled', python };
+  const pipArgs = ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--quiet', 'strands-agents'];
+  if (mode === 'auto') {
+    try {
+      const dir = path.join(path.resolve(projectDir), 'contextbase', 'strands');
+      fs.mkdirSync(dir, { recursive: true });
+      const logPath = path.join(dir, 'sdk-install.log');
+      const fd = fs.openSync(logPath, 'a');
+      const child = spawn(python, pipArgs, { detached: true, stdio: ['ignore', fd, fd], windowsHide: true });
+      child.on('error', () => {});
+      child.unref();
+      fs.closeSync(fd);
+      return { ...current, action: 'scheduled', pid: child.pid, log: logPath, python };
+    } catch (err) {
+      return { ...current, action: 'failed', reason: err.message, python };
+    }
+  }
+  try {
+    const res = spawnSync(python, pipArgs, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+    const after = check();
+    return { ...after, action: after.installed ? 'installed' : 'failed', status: res.status, output: String(res.stdout || '') + String(res.stderr || ''), python };
+  } catch (err) {
+    return { ...current, action: 'failed', reason: err.message, python };
+  }
 }
 
 export function isReady() {

@@ -41,6 +41,7 @@ ContextBase opera de extremo a extremo sin requerir invocación manual durante e
 - **Verificar e integrar hilos sin romper la telaraña:** `contextbase web weave [--merge]`
 - **Reunir resultados y cerrar sesiones:** `contextbase web collect` y `contextbase web stop`.
 - **Identificar y gestionar terminales de agente abiertas para este proyecto:** `contextbase terminals` (list), `contextbase terminals close <pid...|all> [--yes] [--force]` (dry-run por defecto; nunca cierra el árbol propio) y `contextbase terminals send <pid> --message "..."` (opencode y kilo, contrato nativo `run --session`).
+- **Autogestión:** ContextBase cierra solo las terminales de sus propias Arañas cuando el trabajo terminó (`contextbase terminals auto`, y automático en cada hook y en `web collect`) y gestiona el SDK de Strands por sí solo (`contextbase strands sdk --status|--install`; instalación automática en segundo plano al preparar el contexto).
 
 ---
 

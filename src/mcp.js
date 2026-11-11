@@ -42,7 +42,7 @@ const TOOLS = [
   { name: 'contextbase_redundancy', description: 'Detecta redundancia en el entorno global: skills duplicados entre ubicaciones, referencias rotas en commands/agents, bloques de AGENTS.md y MCP duplicados.', inputSchema: { type: 'object', properties: { json: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_slop', description: 'Delivery gate antislop: escanea las lineas agregadas del diff con reglas heuristas de copy, comentarios y estructura.', inputSchema: { type: 'object', properties: { base: { type: 'string' }, json: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_export', description: 'Exporta el estado o digest del proyecto en formato JSON o HTML.', inputSchema: { type: 'object', properties: { type: { type: 'string', description: 'estado o digest' }, format: { type: 'string', description: 'json o html' }, output: { type: 'string', description: 'ruta de archivo de salida opcional' } }, additionalProperties: false } },
-  { name: 'contextbase_strands_prepare', description: 'Prepara el contexto del proyecto para Strands Agent (Python): genera contextbase/strands/ con project_context.py, strands_config.py, tasks.py y context.json.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'contextbase_strands_prepare', description: 'Prepara el contexto del proyecto para Strands Agent (Python): genera contextbase/strands/ con project_context.py, strands_config.py, tasks.py y context.json. Gestiona el SDK de Strands de forma autonoma: sdk=status (informe), sdk=install (instala y verifica), sdk=auto (instala en segundo plano).', inputSchema: { type: 'object', properties: { sdk: { type: 'string', enum: ['status', 'install', 'auto'] } }, additionalProperties: false } },
   { name: 'contextbase_init', description: 'Garantiza la memoria ContextBase y autoconfigura agentes (OpenCode, Kilo, Claude, Cursor y puentes universales) sin intervencion manual.', inputSchema: { type: 'object', properties: { autoConfig: { type: 'boolean' }, universal: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_hook', description: 'Ejecuta o instala hooks automaticos (install|remove|session-start|post-tool|session-stop|web-pulse).', inputSchema: { type: 'object', properties: { action: { type: 'string' }, files: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
   { name: 'contextbase_mission', description: 'Devuelve el prompt de mision de orquestacion y testing (Lead Orchestrator).', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -51,7 +51,7 @@ const TOOLS = [
   { name: 'contextbase_swarm_send', description: 'Envia un mensaje u orden de REFIX a una Araña/worker (o all). Entrega nativa en la sesion viva o por archivo.', inputSchema: { type: 'object', properties: { worker: { type: 'string' }, spider: { type: 'string' }, message: { type: 'string' }, run: { type: 'string' } }, required: ['message'], additionalProperties: false } },
   { name: 'contextbase_swarm_collect', description: 'Reune result.md de cada Araña, da veredicto de merge por rama (clean/conflict) y opcionalmente ejecuta arbitrate o weave.', inputSchema: { type: 'object', properties: { run: { type: 'string' }, arbitrate: { type: 'boolean' }, weave: { type: 'boolean' }, merge: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_swarm_stop', description: 'Detiene los procesos de las Arañas/workers vivos del run.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
-  { name: 'contextbase_terminals', description: 'Identifica terminales/procesos de agente abiertos para este proyecto (action=list; solo lectura). Cierra terminales de agente (action=close: por defecto DRY-RUN, confirm=true ejecuta; nunca cierra el árbol propio ni procesos no identificados). Envía trabajo por contrato nativo (action=send): opencode run --session / kilo run --session; agentes sin sesión nativa devuelven isError con sus capacidades.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'close', 'send'] }, targets: { type: 'array', items: {} }, message: { type: 'string' }, confirm: { type: 'boolean' }, force: { type: 'boolean' } }, required: ['action'], additionalProperties: false } }
+  { name: 'contextbase_terminals', description: 'Identifica terminales/procesos de agente abiertos para este proyecto (action=list; solo lectura). Cierra terminales de agente (action=close: por defecto DRY-RUN, confirm=true ejecuta; nunca cierra el árbol propio ni procesos no identificados). Cierra automáticamente las terminales cuyo trabajo de Araña ya terminó (action=auto; confirm=true ejecuta, dry-run por defecto). Envía trabajo por contrato nativo (action=send): opencode run --session / kilo run --session; agentes sin sesión nativa devuelven isError con sus capacidades.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'close', 'auto', 'send'] }, targets: { type: 'array', items: {} }, message: { type: 'string' }, confirm: { type: 'boolean' }, force: { type: 'boolean' }, includeStale: { type: 'boolean' } }, required: ['action'], additionalProperties: false } }
 ];
 
 const RESOURCES = [
@@ -247,7 +247,9 @@ async function callTool(name, args = {}, projectDir) {
   if (name === 'contextbase_strands_prepare') {
     const strands = await import('./strands.js');
     const result = strands.prepareStrandsContext(projectDir);
-    return JSON.stringify(result, null, 2);
+    const sdkMode = String((args && args.sdk) || 'status');
+    const sdk = strands.ensureStrandsSdk(projectDir, { mode: sdkMode });
+    return JSON.stringify({ ...result, sdk }, null, 2);
   }
   if (name === 'contextbase_init') {
     const r = autoEnsure(projectDir, { autoConfig: Boolean(args && args.autoConfig) });
@@ -349,6 +351,10 @@ async function callTool(name, args = {}, projectDir) {
       if (targets.length === 0) return JSON.stringify({ ok: false, dryRun: true, targets: [], note: 'close sin targets: nada que cerrar. Usa action=list para identificar pids o targets=["all"] para agentes del proyecto.' }, null, 2);
       const confirm = args.confirm === true;
       const res = t.closeTerminals(targets.map(x => String(x)), { yes: confirm, force: Boolean(args.force), cwd: projectDir });
+      return JSON.stringify(res, null, 2);
+    }
+    if (action === 'auto') {
+      const res = await t.autoCloseFinished(projectDir, { includeStale: Boolean(args.includeStale), dryRun: args.confirm !== true });
       return JSON.stringify(res, null, 2);
     }
     if (action === 'send') {

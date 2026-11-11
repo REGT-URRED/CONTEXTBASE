@@ -187,6 +187,19 @@ export async function runExtra(command, args, cwd) {
       if (!res.ok) process.exitCode = 1;
       return true;
     }
+    if (sub === 'auto') {
+      const includeStale = args.includes('--include-stale');
+      const dryRun = !args.includes('--yes');
+      const res = await terms.autoCloseFinished(cwd, { includeStale, dryRun });
+      if (json) { console.log(JSON.stringify(res, null, 2)); return true; }
+      if (!res.candidates.length) { console.log(c.dim + (res.reason || 'sin terminales de agente terminadas para cerrar') + c.reset); return true; }
+      console.log(c.bold + 'Terminales de agente con trabajo terminado:' + c.reset);
+      for (const t of res.candidates) console.log('  - pid ' + t.pid + ' (' + t.agent + ', worker ' + t.worker + ')');
+      if (dryRun) { console.log(c.yellow + 'DRY-RUN: no se cerro nada. Repite con --yes para cerrar.' + c.reset); return true; }
+      for (const r of res.closed) console.log(c.green + '\u2713 cerrada pid ' + r.pid + ' (' + r.agent + ', worker ' + r.worker + ')' + c.reset);
+      for (const s of res.skipped) console.log(c.yellow + '- worker ' + s.worker + ': ' + s.reason + c.reset);
+      return true;
+    }
     if (sub === 'send') {
       const pid = args[2];
       const msgFlag = args.find(a => a.startsWith('--message='));
@@ -528,6 +541,16 @@ export function runSwarmCommand(args, cwd) {
       try { arbitrateWeb({ cwd, run: flags.run }); } catch {}
     }
     const out = swarmCollect({ cwd, run: flags.run });
+    try {
+      import('./terminals.js')
+        .then(t => t.autoCloseFinished(cwd))
+        .then(closed => {
+          if (closed.closed && closed.closed.length && !json) {
+            console.log(c.green + '\u2713 Terminales de agente cerradas automaticamente: ' + closed.closed.map(x => x.pid).join(', ') + c.reset);
+          }
+        })
+        .catch(() => {});
+    } catch {}
     if (json) {
       console.log(JSON.stringify(out, null, 2));
       return true;

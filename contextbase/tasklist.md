@@ -11,6 +11,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] Convención de exit codes 0/1/2 en toda la CLI (+ tests qa-hardening y terminals)
 - [x] `snapshot list` y `snapshot restore` cableados en el CLI; `export` validado; MCP -32602 con JSON corrupto; `slop` excluye archivos generados
 - [x] Nuevo comando `terminals list|close|send` (src/terminals.js) para identificar y gestionar terminales de agente abiertas del proyecto
+- [x] Autogestión: cierre automático de terminales de workers terminados (`terminals auto` + hooks + `web collect`) y gestión autónoma del SDK de Strands (instalación automática en segundo plano, registro en `contextbase/strands/sdk.json`, runner con modo degradado sin traza)
 - [x] v1.5.0: Autoconfiguración real de agentes (`src/autoconfig.js`) para OpenCode (`opencode.json`), Kilo Code (`kilo.json`), Claude Code (`.mcp.json` y `.claude/settings.json`), Cursor y Windsurf con permisos `contextbase_*` preaprobados
 - [x] v1.5.0: Plugin nativo automático `contextbase-auto.js` (`.opencode/plugins/` y `.kilo/plugins/`) con inyección de digest en `experimental.chat.system.transform`, captura de ediciones en `tool.execute.after` (incluyendo `todowrite`) y cierre automático en `session.idle`
 - [x] v1.5.0: Observador en tiempo real y demonio en segundo plano (`src/watcher.js`, `contextbase watch`) que sincroniza `fundamentos.md`, `changelog.md`, `tasklist.md`, `componentes.md` y `strands/`
