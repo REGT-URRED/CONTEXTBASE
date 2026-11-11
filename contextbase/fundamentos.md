@@ -52,7 +52,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `src/changelog.js`: Inserción de entradas y rotación de la bitácora a archivos anuales.
 - `src/fsutil.js`: Escritura atómica y bloqueo asesor por archivo (concurrencia multiagente).
 - `src/hooks.js`: Hooks Git (`post-commit`, `post-merge`, `post-checkout`) y ejecutor de eventos de ciclo de vida (`runLifecycleHook`).
-- `src/mcp.js`: Servidor MCP sobre stdio con cola secuencial FIFO, instrucciones vivas, 7 resources, 2 prompts, 24 tools y watcher activo.
+- `src/mcp.js`: Servidor MCP sobre stdio con cola secuencial FIFO, instrucciones vivas, 7 resources, 2 prompts, 25 tools (incluye `contextbase_terminals`) y watcher activo.
 - `src/bootstrap.js`: Recomendación y ejecución del arranque de un proyecto (`preview`, `run`).
 - `src/cli_extra.js`: Subcomandos extendidos del CLI (`swarm`, `bootstrap`, `guard`, `snapshot`, `restore`, `tools`, `mission`).
 - `src/detect.js`: Detección de CLIs instalados, binarios en `PATH` y lectura JSON/JSONC de configuraciones MCP.
@@ -69,7 +69,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `test/`: Suite de 112 pruebas con el runner nativo `node:test` (sin dependencias), incluyendo `test/qa-hardening.test.js` y `test/terminals.test.js`.
 - `src/env.js`: Criterio único `isTestEnv()`/`realAgentsAllowed()` (guard NODE_TEST_CONTEXT) para que ninguna ruta lance agentes reales bajo `node --test`.
 - `src/jsonc.js`: Fusión quirúrgica sobre JSONC (parse con posición de miembros, `setJsoncPath`, `appendJsoncArray`, `parseJsonc`) preservando comentarios.
-- `src/terminals.js`: Identificación de terminales/procesos de agente abiertos para el proyecto, cierre protegido (dry-run + `--yes`, nunca el propio árbol) y envío por contrato nativo (`opencode run --session`).
+- `src/terminals.js`: Identificación de terminales/procesos de agente abiertos para el proyecto, cierre protegido (dry-run + `--yes`, nunca el propio árbol) y envío por contrato nativo (`opencode run --session` / `kilo run --session`). Tool MCP `contextbase_terminals` (list/close/send; close por defecto es dry-run, `confirm=true` ejecuta).
 - `skills/contextbase/SKILL.md`: Definición formal de la Skill para agentes de IA.
 - `docs/FUNCIONAMIENTO.md`: Documentación funcional completa del flujo automático, plugins, hooks, watcher, MCP, Strands y swarm.
 

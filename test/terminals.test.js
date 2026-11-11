@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { listTerminals, closeTerminals, sendToTerminal } from '../src/terminals.js';
+import { listTerminals, closeTerminals, sendToTerminal, nativeSendSpec } from '../src/terminals.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const me = process.pid;
@@ -14,7 +14,7 @@ function fakeDeps(procs, sent) {
   return {
     listProcesses: () => procs,
     kill(pid, force) { const t = procs.find(p => p.pid === pid); if (t) t.killed = { force }; },
-    sendAgent(sessionId, message, o = {}) { if (sent) sent.push({ sessionId, message, cwd: o.cwd }); return { status: 0, stdout: '{"ok":true}' }; },
+    sendAgent(bin, sessionId, message, o = {}) { if (sent) sent.push({ bin, sessionId, message, cwd: o.cwd }); return { status: 0, stdout: '{"ok":true}' }; },
   };
 }
 
@@ -78,15 +78,35 @@ test('terminals send enruta por contrato nativo opencode run --session', () => {
   const r = sendToTerminal(9100, 'compila el modulo', { cwd: REPO }, deps);
   assert.equal(r.ok, true);
   assert.equal(sent.length, 1);
+  assert.equal(sent[0].bin, 'opencode');
   assert.equal(sent[0].sessionId, 'ses_native_9');
   assert.equal(sent[0].message, 'compila el modulo');
+});
+
+test('terminals send usa kilo run --session para Kilo Code', () => {
+  const sent = [];
+  const deps = fakeDeps([
+    { pid: 9200, ppid: 1, exe: 'kilo.exe', commandLine: 'kilo --cwd "' + REPO + '" --session ses_kilo_77', createdAt: null },
+  ], sent);
+  const r = sendToTerminal(9200, 'corre el lint', { cwd: REPO }, deps);
+  assert.equal(r.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].bin, 'kilo');
+  assert.equal(sent[0].sessionId, 'ses_kilo_77');
+});
+
+test('nativeSendSpec declara capacidades nativas verificadas', () => {
+  assert.equal(nativeSendSpec('OpenCode').bin, 'opencode');
+  assert.equal(nativeSendSpec('Kilo Code').bin, 'kilo');
+  assert.equal(nativeSendSpec('Claude Code'), null);
+  assert.equal(nativeSendSpec('Codex'), null);
 });
 
 test('terminals send falla con mensaje claro si no hay sesion nativa', () => {
   const deps = fakeDeps([
     { pid: 9101, ppid: 1, exe: 'kilo.exe', commandLine: 'kilo --cwd "' + REPO + '"', createdAt: null },
   ]);
-  assert.throws(() => sendToTerminal(9101, 'hola', { cwd: REPO }, deps), /no expone una sesi/);
+  assert.throws(() => sendToTerminal(9101, 'hola', { cwd: REPO }, deps), /no expone envío nativo/);
 });
 
 test('terminals list --json se ejecuta en vivo contra la maquina', () => {

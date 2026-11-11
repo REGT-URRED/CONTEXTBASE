@@ -48,9 +48,9 @@ test('servidor MCP responde initialize, tools/list, resources/list, prompts/list
   assert.ok(responses[0].result.instructions.includes('# ContextBase ::'));
   assert.ok(responses[0].result.capabilities.resources);
   assert.ok(responses[0].result.capabilities.prompts);
-  assert.equal(responses[1].result.tools.length, 24);
+  assert.equal(responses[1].result.tools.length, 25);
   const names = responses[1].result.tools.map(t => t.name);
-  for (const name of ['contextbase_review', 'contextbase_redundancy', 'contextbase_slop', 'contextbase_swarm_start', 'contextbase_swarm_stop', 'contextbase_export', 'contextbase_strands_prepare', 'contextbase_init', 'contextbase_hook']) {
+  for (const name of ['contextbase_review', 'contextbase_redundancy', 'contextbase_slop', 'contextbase_swarm_start', 'contextbase_swarm_stop', 'contextbase_terminals', 'contextbase_export', 'contextbase_strands_prepare', 'contextbase_init', 'contextbase_hook']) {
     assert.ok(names.includes(name), 'falta la tool ' + name);
   }
   assert.ok(responses[2].result.content[0].text.includes('# ContextBase'));

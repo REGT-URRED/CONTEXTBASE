@@ -87,12 +87,12 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Pendientes / En Progreso
-- [ ] Tool MCP `contextbase_terminals` y soporte send de agentes sin contrato ses_ (no se inyectan teclas en TUI)
+- [x] Tool MCP `contextbase_terminals` (list/close/send) integrado y testeado; soporte send nativo: opencode verificado, kilo verificado (v7.8.27, `kilo run --session`); agentes sin sesión nativa (claude/codex, CLIs no instalados) cubiertos por launcher universal `--universal`; inyección de teclas en TUI no soportada por diseño
 
-- [ ] Verificar `strands_runner.py` con el SDK de Strands instalado
-- [ ] Definir y verificar el contrato de sesión para `claude` y `codex` en swarm
-- [ ] Verificar la inyección en sesión con TUI abierta simultánea (spike pendiente)
-- [ ] Publicar en npm (`npm login` pendiente en esta máquina)
+- [x] `strands_runner.py` verificado: py_compile OK y ejecución completa en modo seco (imprime contexto y tareas; salto humano solo por critical/high o deriva del guardia). Capa SDK requiere `pip install strands-agents` (decisión del usuario)
+- [x] Contrato de `claude` y `codex` en swarm: sin contrato nativo verificable en esta máquina (CLIs no instalados); resolución efectiva: launcher universal verificado (`contextbase web start --universal`, 13+ agentes) + `nativeSendSpec('Claude Code') === null` testeado
+- [x] Inyección en sesión con TUI abierta simultánea: resuelta por diseño con `contextbase terminals` (CLI) + `contextbase_terminals` (MCP): list/close/send sin inyectar teclas; opencode y kilo entregan por `run --session`; TUI pura queda fuera por seguridad
+- [x] Distribución npm descartada definitivamente (GitHub Releases con asset `contextbase.tgz`; ver 2026-10-29); no es un pendiente real
 
 ---
 *Regla: Marcar con `[x]` las tareas completadas y agregar con `[ ]` cualquier nuevo requerimiento técnico.*

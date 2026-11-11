@@ -68,8 +68,8 @@ function defaultDeps() {
           stdio: 'ignore', timeout: 10000, windowsHide: true,
         });
       },
-      sendAgent(sessionId, message, o = {}) {
-        return spawnSync('opencode', ['run', '--session', sessionId, '--format', 'json', String(message)], {
+      sendAgent(bin, sessionId, message, o = {}) {
+        return spawnSync(bin, ['run', '--session', sessionId, '--format', 'json', String(message)], {
           cwd: o.cwd, encoding: 'utf8', timeout: Number(process.env.CONTEXTBASE_AGENT_TIMEOUT_MS || 120000), windowsHide: true,
         });
       },
@@ -86,8 +86,8 @@ function defaultDeps() {
     kill(pid, force) {
       try { process.kill(pid, force ? 'SIGKILL' : 'SIGTERM'); } catch (err) { throw new Error('No se pudo cerrar el pid ' + pid + ': ' + err.message); }
     },
-    sendAgent(sessionId, message, o = {}) {
-      return spawnSync('opencode', ['run', '--session', sessionId, '--format', 'json', String(message)], {
+    sendAgent(bin, sessionId, message, o = {}) {
+      return spawnSync(bin, ['run', '--session', sessionId, '--format', 'json', String(message)], {
         cwd: o.cwd, encoding: 'utf8', timeout: Number(process.env.CONTEXTBASE_AGENT_TIMEOUT_MS || 120000),
       });
     },
@@ -175,6 +175,14 @@ export function closeTerminals(targets, options = {}, deps = defaultDeps()) {
  * La inyección de teclas en TUI ajenas no está soportada; se usa el contrato
  * de sesión del agente (hoy: opencode run --session <ses_...>).
  */
+// Contrato nativo de envío: solo agentes cuyo CLI expone run --session verificado.
+export function nativeSendSpec(agent) {
+  const a = String(agent || '');
+  if (a === 'OpenCode') return { bin: 'opencode' };
+  if (a === 'Kilo Code') return { bin: 'kilo' };
+  return null;
+}
+
 export function sendToTerminal(pid, message, options = {}, deps = defaultDeps()) {
   const { cwd = process.cwd() } = options;
   if (!String(message || '').trim()) throw new Error('Uso: contextbase terminals send <pid> --message "..."');
@@ -182,10 +190,11 @@ export function sendToTerminal(pid, message, options = {}, deps = defaultDeps())
   const target = identified.find(i => i.pid === Number(pid));
   if (!target) throw new Error('pid ' + pid + ' no identificado como agente en ejecución en este equipo. Ejecuta: contextbase terminals');
   if (target.protected) throw new Error('pid ' + pid + ' está protegido (es tu propio árbol de procesos)');
-  if (target.agent !== 'OpenCode' || !target.sessionId) {
-    throw new Error('la terminal ' + target.agent + ' (pid ' + pid + ') no expone una sesión nativa (ses_...) en su línea de comandos; la inyección de teclas en TUI no está soportada. Para runs activos usa: contextbase web send --worker <id> --message "..." o ciérrala con: contextbase terminals close ' + pid + ' --yes');
+  const cap = nativeSendSpec(target.agent);
+  if (!cap || !target.sessionId) {
+    throw new Error('la terminal ' + target.agent + ' (pid ' + pid + ') no expone envío nativo' + (!target.sessionId ? ' (sin sesion ses_ en su línea de comandos)' : '') + '. Capacidades verificadas en esta máquina: opencode -> nativo (opencode run --session), kilo -> nativo (kilo run --session, v7.8.27), claude/codex -> sin contrato verificado (CLIs no instalados; usa el launcher universal: contextbase web start --universal). Para runs activos de Telaraña: contextbase web send --worker <id> --message "..." o ciérrala con: contextbase terminals close ' + pid + ' --yes');
   }
-  const res = deps.sendAgent(target.sessionId, message, { cwd });
+  const res = deps.sendAgent(cap.bin, target.sessionId, message, { cwd });
   const out = String(res.stdout || '').trim();
   return { ok: res.status === 0, pid: target.pid, agent: target.agent, sessionId: target.sessionId, tail: out.slice(-2000), status: res.status };
 }

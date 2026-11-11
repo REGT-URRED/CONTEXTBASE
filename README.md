@@ -40,6 +40,7 @@ ContextBase opera de extremo a extremo sin requerir invocación manual durante e
 - **Consultar el tablero de la Zona de Flujo y ahorro de tokens:** `contextbase web flow` (o `contextbase web metrics --json`).
 - **Verificar e integrar hilos sin romper la telaraña:** `contextbase web weave [--merge]`
 - **Reunir resultados y cerrar sesiones:** `contextbase web collect` y `contextbase web stop`.
+- **Identificar y gestionar terminales de agente abiertas para este proyecto:** `contextbase terminals` (list), `contextbase terminals close <pid...|all> [--yes] [--force]` (dry-run por defecto; nunca cierra el árbol propio) y `contextbase terminals send <pid> --message "..."` (opencode y kilo, contrato nativo `run --session`).
 
 ---
 
@@ -85,11 +86,12 @@ src/cli_extra.js        comandos de Telaraña (web/telarana/swarm), arbitraje, f
 src/web.js              motor de Telaraña: decomposePrey, hydrateWorktreeMemory, subagents.json, Árbitro Automático y Economía de Tokens
 src/swarm.js            gestión de worktrees, ramas, estado espejado y sesiones de Arañas
 src/swarm-agents.js     lanzadores por terminal para OpenCode y Kilo Code
+src/terminals.js        control de terminales de agente abiertas (list/close/send) con protección propia
 src/auto.js             automatización silenciosa, auto-reparación de configs y pulso de Telaraña
 src/autoconfig.js       autoconfiguración resiliente de MCP, permisos y plugins (OpenCode, Kilo, Claude, Cursor)
 src/watcher.js          observador en tiempo real, sincronización del árbol de trabajo y arbitraje continuo
 src/hooks.js            hooks Git y ejecutor de ciclo de vida (session-start, post-tool, session-stop, web-pulse)
-src/mcp.js              servidor MCP stdio (24 tools, resources, prompts, instrucciones vivas y watcher)
+src/mcp.js              servidor MCP stdio (25 tools, resources, prompts, instrucciones vivas y watcher)
 src/scanner.js          escaneo, metadatos, Repomix, redacción
 src/generator.js        documentos y bloque sincronizado
 src/maintenance.js      inventario, frescura y brechas

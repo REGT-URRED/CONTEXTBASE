@@ -50,7 +50,8 @@ const TOOLS = [
   { name: 'contextbase_swarm_status', description: 'Estado de las Arañas/workers, Zona de Flujo, Economia de Tokens y Árbitro Automático (pasar arbitrate: true para evaluar PASS/REFIX/RERUN/FAIL, flow: true para flow.md o metrics: true para metrics.json).', inputSchema: { type: 'object', properties: { run: { type: 'string' }, arbitrate: { type: 'boolean' }, flow: { type: 'boolean' }, metrics: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_swarm_send', description: 'Envia un mensaje u orden de REFIX a una Araña/worker (o all). Entrega nativa en la sesion viva o por archivo.', inputSchema: { type: 'object', properties: { worker: { type: 'string' }, spider: { type: 'string' }, message: { type: 'string' }, run: { type: 'string' } }, required: ['message'], additionalProperties: false } },
   { name: 'contextbase_swarm_collect', description: 'Reune result.md de cada Araña, da veredicto de merge por rama (clean/conflict) y opcionalmente ejecuta arbitrate o weave.', inputSchema: { type: 'object', properties: { run: { type: 'string' }, arbitrate: { type: 'boolean' }, weave: { type: 'boolean' }, merge: { type: 'boolean' } }, additionalProperties: false } },
-  { name: 'contextbase_swarm_stop', description: 'Detiene los procesos de las Arañas/workers vivos del run.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } }
+  { name: 'contextbase_swarm_stop', description: 'Detiene los procesos de las Arañas/workers vivos del run.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
+  { name: 'contextbase_terminals', description: 'Identifica terminales/procesos de agente abiertos para este proyecto (action=list; solo lectura). Cierra terminales de agente (action=close: por defecto DRY-RUN, confirm=true ejecuta; nunca cierra el árbol propio ni procesos no identificados). Envía trabajo por contrato nativo (action=send): opencode run --session / kilo run --session; agentes sin sesión nativa devuelven isError con sus capacidades.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'close', 'send'] }, targets: { type: 'array', items: {} }, message: { type: 'string' }, confirm: { type: 'boolean' }, force: { type: 'boolean' } }, required: ['action'], additionalProperties: false } }
 ];
 
 const RESOURCES = [
@@ -336,6 +337,29 @@ async function callTool(name, args = {}, projectDir) {
   if (name === 'contextbase_swarm_stop' || name === 'contextbase_web_stop') {
     const sw = await import('./swarm.js');
     return JSON.stringify(sw.swarmStop({ cwd: projectDir, run: args.run }), null, 2);
+  }
+  if (name === 'contextbase_terminals') {
+    const t = await import('./terminals.js');
+    const action = String(args.action || 'list');
+    if (action === 'list') {
+      return JSON.stringify(t.listTerminals(projectDir), null, 2);
+    }
+    if (action === 'close') {
+      const targets = Array.isArray(args.targets) ? args.targets.filter(x => x !== undefined && x !== null) : [];
+      if (targets.length === 0) return JSON.stringify({ ok: false, dryRun: true, targets: [], note: 'close sin targets: nada que cerrar. Usa action=list para identificar pids o targets=["all"] para agentes del proyecto.' }, null, 2);
+      const confirm = args.confirm === true;
+      const res = t.closeTerminals(targets.map(x => String(x)), { yes: confirm, force: Boolean(args.force), cwd: projectDir });
+      return JSON.stringify(res, null, 2);
+    }
+    if (action === 'send') {
+      const message = String(args.message || '');
+      if (!message.trim()) throw new Error('message es obligatorio para send');
+      const pid = Number(args.pid ?? (Array.isArray(args.targets) ? args.targets[0] : undefined));
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error('pid inválido en targets[0] para send');
+      const res = t.sendToTerminal(pid, message, { cwd: projectDir });
+      return JSON.stringify(res, null, 2);
+    }
+    throw new Error('action no soportada en contextbase_terminals: ' + action + ' (usa list, close o send)');
   }
   throw new Error('Tool desconocida: ' + name);
 }
