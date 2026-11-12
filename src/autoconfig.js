@@ -71,6 +71,18 @@ function readJsonSafe(file) {
   return null;
 }
 
+/**
+ * OpenCode v2 autoscanea los directorios `plugin/` y `plugins/` (archivos o carpetas).
+ * Registrar la ruta de un archivo en el array `plugin` no aporta nada y dispara el
+ * aviso "configured plugin path must be a directory".
+ */
+function isContextbasePluginFile(entry) {
+  return typeof entry === 'string' && /contextbase-auto\.js$/i.test(entry);
+}
+function stripContextbasePluginFiles(arr) {
+  return (Array.isArray(arr) ? arr : []).filter(p => !isContextbasePluginFile(p));
+}
+
 function ensureArrayItem(arr, item) {
   const list = Array.isArray(arr) ? arr.slice() : [];
   if (!list.includes(item)) list.push(item);
@@ -311,7 +323,13 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '  };',
     '};',
     '',
-    'export default ContextBaseAutoPlugin;',
+    'async function setupContextBaseAuto(ctx = {}) {',
+    '  // OpenCode v2 exige un export default con id y setup; una funcion suelta se rechaza.',
+    '  const dir = (ctx && ctx.location && ctx.location.directory) || process.cwd();',
+    '  await ContextBaseAutoPlugin({ directory: dir, worktree: dir });',
+    '}',
+    '',
+    'export default { id: "contextbase-auto", server: ContextBaseAutoPlugin, setup: setupContextBaseAuto };',
     ''
   ].join('\n');
 }
@@ -479,7 +497,7 @@ export function configureOpenCode(projectDir, options = {}) {
   }
   const cfg = parsed || {};
   cfg.instructions = ensureArrayItem(cfg.instructions, 'AGENTS.md');
-  cfg.plugin = ensureArrayItem(cfg.plugin, './.opencode/plugins/contextbase-auto.js');
+  cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
   cfg.permission = {
     ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
     'contextbase_*': 'allow'
@@ -777,7 +795,7 @@ export function autoConfigureGlobal(options = {}) {
       [
         {
           value(cfg) {
-            cfg.plugin = ensureArrayItem(cfg.plugin, pluginPath.replace(/\\/g, '/'));
+            cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',
@@ -791,8 +809,8 @@ export function autoConfigureGlobal(options = {}) {
           },
           jsonc(raw, parsed) {
             let out = raw;
-            if (!Array.isArray(parsed.plugin) || !parsed.plugin.includes(pluginPath.replace(/\\/g, '/'))) {
-              out = ensureJsoncArrayItem(out, parsed, ['plugin'], pluginPath.replace(/\\/g, '/'));
+            if (Array.isArray(parsed.plugin) && parsed.plugin.some(isContextbasePluginFile)) {
+              out = setJsoncPath(out, ['plugin'], stripContextbasePluginFiles(parsed.plugin));
             }
             const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
             if (existingPerm !== 'allow') {
