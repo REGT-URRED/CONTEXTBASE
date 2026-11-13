@@ -5,6 +5,9 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] [2026-11-13] Plugin de ContextBase con guard de instancia unica (global + proyecto en el mismo proceso ya no duplica hooks)
+- [x] [2026-11-13] Pulso EGM apuntado al documento de diseno mas reciente de `docs/` y blocker de `fundamentos.md` corregido
+- [x] [2026-11-13] Agente `gentle-orchestrator` en naranja (`#f59e0b`) en el config global, aplicado sin tocar el resto
 - [x] [2026-11-13] EGM vivo como funcionalidad de base: pulso automatico en el heartbeat (`egmPulsed`), veredicto en `contextbase/egm/verdict.json`, seccion propia en el digest vivo e instalacion de la skill `contextbase-egm` en todos los agentes
 - [x] [2026-11-13] Fusion del config de OpenCode adaptada al esquema instalado (v1 vs v2: `plugin`/`permission`/`mcp.<n>` vs `plugins`/`permissions`/`mcp.servers`) e idempotente: sin cambios reales no se reescribe el archivo
 - [x] [2026-11-13] Contrato del plugin OpenCode v2 verificado contra el binario instalado y blindado con validador (`validateOpenCodePluginSource`): un plugin invalido ya no se escribe a disco

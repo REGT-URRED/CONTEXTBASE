@@ -34,7 +34,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Binarios Registrados:** `contextbase`, `cb`, `openwiki`
 - **Motor de Escaneo:** Analizador estático y empaquetador Repomix integrado en `src/scanner.js`
 - **Mantenimiento Preventivo:** Inventario de componentes, frescura y brechas en `src/maintenance.js`; informe en `contextbase/componentes.md`; comando `contextbase audit`
-- **Autoconfiguración de Agentes:** `src/autoconfig.js` genera y mantiene `kilo.json`, `opencode.json`, `.mcp.json`, `.opencode/plugins/contextbase-auto.js`, `.kilo/plugins/contextbase-auto.js`, `.kilo/rules/contextbase.md` y `.claude/settings.json`.
+- **Autoconfiguración de Agentes:** `src/autoconfig.js` detecta los agentes presentes (OpenCode, Kilo Code, Claude Code, Cursor, Windsurf) y escribe en su configuración existente lo mínimo necesario: servidor MCP, permisos preaprobados `contextbase_*`, plugin nativo y reglas. Nunca pisa contenido del usuario y respeta la precedencia `.jsonc`.
 
 ### Módulos Principales del Sistema:
 - `bin/contextbase.js`: Punto de entrada ejecutable CLI.

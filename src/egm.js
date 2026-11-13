@@ -1407,6 +1407,26 @@ function egmPaqueteVersion() {
 
 function egmPulseTarget(root, explicit) {
   if (explicit) return path.resolve(root, String(explicit));
+  // El modelo revisa DOCUMENTOS DE DISENO: el candidato natural es el spec mas
+  // reciente de docs/ (ahi viven los estandares EGM). fundamentos.md y README son
+  // inventarios/portadas: se usan solo si no hay documentos de diseno.
+  const docsDir = path.join(root, 'docs');
+  try {
+    const docs = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.md$/i.test(entry.name)) continue;
+        try { docs.push({ file: full, mtime: fs.statSync(full).mtimeMs }); } catch { /* ilegible */ }
+      }
+    };
+    walk(docsDir);
+    if (docs.length > 0) {
+      docs.sort((a, b) => (b.mtime - a.mtime) || (b.file > a.file ? 1 : -1));
+      return docs[0].file;
+    }
+  } catch { /* sin docs/: se cae a los candidatos base */ }
   const candidatos = [
     path.join(root, 'contextbase', 'fundamentos.md'),
     path.join(root, 'README.md'),

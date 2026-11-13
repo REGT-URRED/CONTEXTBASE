@@ -121,3 +121,25 @@ test('plugin: el bloque id + server + setup sin effect es valido', () => {
   const result = validateOpenCodePluginSource(good);
   assert.equal(result.ok, true, 'el contrato sin effect debe pasar: ' + result.problems);
 });
+
+test('plugin: una segunda instancia en el mismo proceso no registra hooks', async () => {
+  const dir = tmp('cb-plugin-dup-');
+  const src = buildOpenCodePluginSource();
+  const a = path.join(dir, 'a.mjs');
+  const b = path.join(dir, 'b.mjs');
+  fs.writeFileSync(a, src, 'utf8');
+  fs.writeFileSync(b, src, 'utf8');
+
+  // El host carga el global y el del proyecto como modulos distintos en el mismo proceso.
+  const modA = await import(pathToFileURL(a).href + '?v=' + Date.now());
+  const modB = await import(pathToFileURL(b).href + '?v=' + Date.now());
+
+  const hooksA = await modA.ContextBaseAutoPlugin({ directory: dir });
+  const hooksB = await modB.ContextBaseAutoPlugin({ directory: dir });
+
+  assert.equal(typeof hooksA, 'object', 'la primera instancia debe devolver hooks');
+  assert.ok(Object.keys(hooksA).length > 0, 'la primera instancia registra al menos un hook');
+  assert.deepEqual(hooksB, {}, 'la segunda instancia no debe registrar hooks (evita duplicados)');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
