@@ -59,10 +59,15 @@ export function isRelevantPath(relPath) {
   if (!norm) return false;
   if (norm[1] === ':' && norm[2] === '/') return false;
   if (norm.startsWith('../') || norm === '..') return false;
-  if (IGNORED_FILES.has(norm.toLowerCase())) return false;
-  if (norm.endsWith('.tmp') || norm.endsWith('.lock') || norm.endsWith('.log')) return false;
+  // Windows compara rutas sin distinguir mayusculas: si el filtro fuera sensible al
+  // caso, `ContextBase/changelog.md` entraria como cambio real y realimentaria el
+  // changelog en cada evento. Se compara en minusculas; el nombre original se conserva
+  // para el reporte.
+  const lower = norm.toLowerCase();
+  if (IGNORED_FILES.has(lower)) return false;
+  if (lower.endsWith('.tmp') || lower.endsWith('.lock') || lower.endsWith('.log')) return false;
   for (const prefix of IGNORED_PREFIXES) {
-    if (norm === prefix.slice(0, -1) || norm.startsWith(prefix)) return false;
+    if (lower === prefix.slice(0, -1) || lower.startsWith(prefix)) return false;
   }
   return true;
 }

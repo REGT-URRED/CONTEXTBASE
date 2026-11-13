@@ -4,6 +4,8 @@ import { execFileSync, spawn as nodeSpawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto';
 import { agentInfo, buildLauncher, mintSessionId } from './swarm-agents.js';
 import { realAgentsAllowed } from './env.js';
+import { cbError, writeAtomic } from './fsutil.js';
+import { isValidId, requireId, resolveInside } from './sandbox.js';
 import {
   PHILOSOPHY,
   buildSequentialSubagents,
@@ -16,6 +18,9 @@ import {
 
 const SWARM_DIR = 'contextbase/swarm';
 const WEB_DIR = 'contextbase/web';
+
+// Campos de un worker que se usan como rutas del filesystem.
+const WORKER_PATH_FIELDS = ['task', 'result', 'status', 'subagents', 'refix', 'launcher', 'worktree'];
 
 // Tiempos de espera de los subprocesos. Sin limite, un agente colgado bloquea el event loop
 // y `node --test` nunca termina (ver src/env.js para el guard de entorno de pruebas).
@@ -32,42 +37,132 @@ export function makeRunId(now = new Date()) {
 }
 
 function runDir(cwd, run) {
-  return path.join(cwd, SWARM_DIR, run);
+  const base = path.join(path.resolve(cwd), SWARM_DIR);
+  return resolveInside(base, requireId(run, 'runDir', 'id de run'), { op: 'runDir', what: 'id de run' });
 }
 
 function webRunDir(cwd, run) {
-  return path.join(cwd, WEB_DIR, run);
+  const base = path.join(path.resolve(cwd), WEB_DIR);
+  return resolveInside(base, requireId(run, 'webRunDir', 'id de run'), { op: 'webRunDir', what: 'id de run' });
+}
+
+/**
+ * Ruta absoluta y contenida de un campo de worker (result, status, worktree, ...).
+ * Un estado manipulado que apunte fuera del proyecto lanza CB_PATH_ESCAPE.
+ */
+export function workerPath(root, worker, field) {
+  const value = worker ? worker[field] : undefined;
+  if (typeof value !== 'string' || value === '') {
+    throw cbError(
+      'CB_STATE_SCHEMA',
+      `workerPath.${field}`,
+      String(worker && worker.id),
+      `el worker no tiene "${field}" como ruta valida; el estado esta corrupto. Recuperacion: relanza el run con "contextbase web start --prey \\"...\\"."`
+    );
+  }
+  return resolveInside(path.resolve(root), value, { op: `workerPath.${worker.id || '?'}.${field}`, what: `ruta "${field}" del worker` });
+}
+
+/**
+ * Valida el esquema del estado de un run antes de confiar en el.
+ * Lanza CB_STATE_SCHEMA / CB_PATH_ESCAPE con la ruta del archivo y una accion de recuperacion.
+ */
+export function validateState(root, state, file, op = 'readState') {
+  const fail = (detail) => cbError('CB_STATE_SCHEMA', op, file, detail);
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    throw fail('el estado debe ser un objeto JSON con "run", "base" y "workers". Recuperacion: relanza el run con "contextbase web start --prey \\"...\\".');
+  }
+  if (!isValidId(state.run)) {
+    throw fail(`falta "run" o no es un id valido (recibido: ${JSON.stringify(state.run)}). Recuperacion: elimina el directorio del run y relanza "contextbase web start --prey \\"...\\".`);
+  }
+  if (typeof state.base !== 'string' || state.base.trim() === '') {
+    throw fail('falta "base" (rama o commit base del run). Recuperacion: restaura el state.json desde un backup o relanza el run.');
+  }
+  if (!Array.isArray(state.workers)) {
+    throw fail('"workers" debe ser un array de arañas. Recuperacion: restaura el state.json desde un backup o relanza el run.');
+  }
+  for (const w of state.workers) {
+    if (!w || typeof w !== 'object') throw fail('cada entrada de "workers" debe ser un objeto.');
+    if (!isValidId(w.id)) {
+      throw fail(`worker con "id" invalido (${JSON.stringify(w.id)}). Recuperacion: restaura el state.json desde un backup o relanza el run.`);
+    }
+    for (const field of WORKER_PATH_FIELDS) {
+      const value = w[field];
+      if (value === undefined || value === null) continue;
+      if (typeof value !== 'string' || value === '') {
+        throw fail(`"workers[${w.id}].${field}" debe ser una ruta relativa no vacia.`);
+      }
+      try {
+        resolveInside(root, value, { op: `state.workers.${w.id}.${field}`, what: `ruta "${field}"` });
+      } catch (err) {
+        throw cbError(
+          'CB_PATH_ESCAPE',
+          `state.workers.${w.id}.${field}`,
+          path.resolve(root, value),
+          `el estado apunta fuera del proyecto en "${field}"; el state.json esta manipulado o corrupto. Recuperacion: restaura el state.json desde un backup o relanza el run.`
+        );
+      }
+    }
+  }
+  return state;
+}
+
+function loadStateFile(root, file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw cbError(
+      'CB_STATE_CORRUPT',
+      'readState',
+      file,
+      `no se pudo leer el estado (${err && err.message ? err.message : err}); verifica permisos o relanza el run con "contextbase web start --prey \\"...\\"."`
+    );
+  }
+  let state;
+  try {
+    state = JSON.parse(raw);
+  } catch {
+    // El mensaje crudo del parser ("Unexpected token ...") nunca sale al usuario.
+    throw cbError(
+      'CB_STATE_CORRUPT',
+      'readState',
+      file,
+      'el state.json no es JSON valido. Recuperacion: restaura el archivo desde contextbase/snapshot (contextbase snapshot restore <id>) o elimina el directorio del run y relanza "contextbase web start --prey \\"...\\".'
+    );
+  }
+  return validateState(root, state, file);
 }
 
 export function readState(cwd, run) {
-  const fileSwarm = path.join(runDir(cwd, run), 'state.json');
-  if (fs.existsSync(fileSwarm)) {
-    return JSON.parse(fs.readFileSync(fileSwarm, 'utf8'));
-  }
-  const fileWeb = path.join(webRunDir(cwd, run), 'state.json');
-  if (fs.existsSync(fileWeb)) {
-    return JSON.parse(fs.readFileSync(fileWeb, 'utf8'));
-  }
+  const root = path.resolve(cwd);
+  const id = requireId(run, 'readState', 'id de run');
+  const fileSwarm = path.join(runDir(root, id), 'state.json');
+  if (fs.existsSync(fileSwarm)) return loadStateFile(root, fileSwarm);
+  const fileWeb = path.join(webRunDir(root, id), 'state.json');
+  if (fs.existsSync(fileWeb)) return loadStateFile(root, fileWeb);
   return null;
 }
 
 export function writeState(cwd, state) {
+  const root = path.resolve(cwd);
+  const id = requireId(state && state.run, 'writeState', 'id de run');
   const payload = JSON.stringify(state, null, 2) + '\r\n';
-  const dirSwarm = runDir(cwd, state.run);
-  fs.mkdirSync(dirSwarm, { recursive: true });
-  fs.writeFileSync(path.join(dirSwarm, 'state.json'), payload, 'utf8');
-
-  const dirWeb = webRunDir(cwd, state.run);
-  fs.mkdirSync(dirWeb, { recursive: true });
-  fs.writeFileSync(path.join(dirWeb, 'state.json'), payload, 'utf8');
+  for (const dir of [runDir(root, id), webRunDir(root, id)]) {
+    validateState(root, state, path.join(dir, 'state.json'), 'writeState');
+    fs.mkdirSync(dir, { recursive: true });
+    // Un unico temporal + rename por archivo: nunca queda un state.json a medio escribir.
+    writeAtomic(path.join(dir, 'state.json'), payload);
+  }
 }
 
 export function listRuns(cwd) {
   const found = new Set();
   for (const baseRel of [SWARM_DIR, WEB_DIR]) {
-    const base = path.join(cwd, baseRel);
+    const base = path.join(path.resolve(cwd), baseRel);
     if (!fs.existsSync(base)) continue;
     for (const e of fs.readdirSync(base, { withFileTypes: true })) {
+      if (!isValidId(e.name)) continue;
       if (e.isDirectory() && fs.existsSync(path.join(base, e.name, 'state.json'))) {
         found.add(e.name);
       }
@@ -445,7 +540,7 @@ export function startSwarm(options = {}, deps) {
   writeState(cwd, state);
 
   for (const w of state.workers) {
-    const spawned = d.spawn(path.join(cwd, w.launcher), path.join(cwd, w.worktree));
+    const spawned = d.spawn(workerPath(cwd, w, 'launcher'), workerPath(cwd, w, 'worktree'));
     if (spawned && spawned.pid) w.pid = spawned.pid;
   }
   writeState(cwd, state);
@@ -480,7 +575,7 @@ export function resolveRun(cwd, run) {
 
 function readReport(cwd, worker) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(cwd, worker.status), 'utf8'));
+    return JSON.parse(fs.readFileSync(workerPath(cwd, worker, 'status'), 'utf8'));
   } catch {
     return null;
   }
@@ -495,10 +590,11 @@ export function swarmStatus({ cwd, run }, deps) {
   const started = Date.parse(state.createdAt) || now;
 
   const workers = state.workers.map((w) => {
-    const resultAbs = path.join(root, w.result);
+    // Contencion: el estado puede venir manipulado; nunca se lee fuera del proyecto.
+    const resultAbs = workerPath(root, w, 'result');
     const resultExists = fs.existsSync(resultAbs);
     const resultAt = resultExists ? fs.statSync(resultAbs).mtimeMs : 0;
-    const wt = path.join(root, w.worktree);
+    const wt = workerPath(root, w, 'worktree');
     let lastCommitAt = 0;
     let changes = 0;
     try {
@@ -562,14 +658,14 @@ export function swarmSend({ cwd, run, worker, message }, deps) {
   const info = agentInfo(state.agent, { cwd: root });
   const workers = [];
   for (const w of targets) {
-    const wDir = path.join(root, w.task, '..');
+    const wDir = path.dirname(workerPath(root, w, 'task'));
     fs.mkdirSync(wDir, { recursive: true });
     fs.appendFileSync(path.join(wDir, 'inbox.md'), `- [${new Date().toISOString()}] ${text}\r\n`, 'utf8');
     let delivered = 'file';
     if (info.supported && !info.universal && typeof d.runAgent === 'function') {
       try {
         d.runAgent(['run', '--session', w.session, '--format', 'json', text], {
-          cwd: path.join(root, w.worktree),
+          cwd: workerPath(root, w, 'worktree'),
           binary: info.binary,
         });
         delivered = 'native';
@@ -594,7 +690,7 @@ export function swarmCollect({ cwd, run }, deps) {
   const state = resolveRun(root, run);
 
   const workers = state.workers.map((w) => {
-    const resultAbs = path.join(root, w.result);
+    const resultAbs = workerPath(root, w, 'result');
     const exists = fs.existsSync(resultAbs);
     const content = exists ? fs.readFileSync(resultAbs, 'utf8') : '';
     let merge = 'unknown';

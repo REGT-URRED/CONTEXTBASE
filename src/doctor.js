@@ -11,8 +11,39 @@ import { installSkill } from './installer.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/** Minimo de tools que un servidor MCP de ContextBase sano debe exponer. */
-const MIN_MCP_TOOLS = 26;
+/**
+ * Contrato exacto de tools del servidor MCP (26). El conteo solo no alcanza: un server
+ * que expone 26 tools con una renombrada deja al agente sin la tool real.
+ * Mantener en sincronia con TOOLS de src/mcp.js.
+ */
+const EXPECTED_MCP_TOOLS = [
+  'contextbase_status',
+  'contextbase_context',
+  'contextbase_log',
+  'contextbase_task',
+  'contextbase_audit',
+  'contextbase_sync',
+  'contextbase_bootstrap',
+  'contextbase_guard',
+  'contextbase_snapshot',
+  'contextbase_restore',
+  'contextbase_tools',
+  'contextbase_review',
+  'contextbase_redundancy',
+  'contextbase_slop',
+  'contextbase_export',
+  'contextbase_strands_prepare',
+  'contextbase_init',
+  'contextbase_hook',
+  'contextbase_mission',
+  'contextbase_egm_review',
+  'contextbase_swarm_start',
+  'contextbase_swarm_status',
+  'contextbase_swarm_send',
+  'contextbase_swarm_collect',
+  'contextbase_swarm_stop',
+  'contextbase_terminals',
+];
 
 /** Tiempo maximo del handshake MCP completo (initialize + tools/list + salida limpia). */
 const DEFAULT_TIMEOUT_MS = 12000;
@@ -35,6 +66,34 @@ const AGENT_HOMES = [
 
 /** Claves de la raiz que delatan un config del esquema legacy (v1). */
 const LEGACY_ROOT_KEYS = ['plugin', 'permission'];
+
+/** Unicas claves validas dentro de `agents.<nombre>` en el esquema v2 del host. */
+const AGENT_V2_KEYS = new Set([
+  'model',
+  'request',
+  'system',
+  'description',
+  'mode',
+  'hidden',
+  'color',
+  'steps',
+  'disabled',
+  'permissions',
+]);
+
+/**
+ * Claves v1 que el host v2 DESCARTA sin avisar dentro de `agents.<nombre>`, con su
+ * equivalente v2. Es el falso negativo mas caro del doctor: 22 de 24 agentes quedaron
+ * sin system prompt ni permisos mientras el chequeo de esquema decia "v2 limpio".
+ */
+const AGENT_V1_KEYS = new Map([
+  ['prompt', 'system'],
+  ['permission', 'permissions'],
+  ['variant', 'model.variant'],
+  ['tools', 'permissions'],
+  ['maxSteps', 'steps'],
+  ['disable', 'disabled'],
+]);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -240,6 +299,66 @@ function checkGlobalOpenCodeSchema(info) {
   return buildCheck(id, title, 'info', true, `${info.file} es v2 limpio (permissions array + agents, sin claves legacy).`);
 }
 
+/** Nombres de agente en una sola linea, acotado para no inflar el detalle. */
+function sampleAgents(names, max = 3) {
+  const list = Array.from(names);
+  const head = list.slice(0, max).join(', ');
+  return list.length > max ? `${head} +${list.length - max} mas` : head;
+}
+
+/**
+ * Valida el contrato de agentes: en v2 el host ignora en silencio cualquier clave
+ * desconocida dentro de `agents.<nombre>`. Un `prompt` en vez de `system` no rompe
+ * el parseo, simplemente el agente arranca sin system prompt y sin permisos.
+ */
+function checkGlobalOpenCodeAgents(info) {
+  const id = 'global-opencode-agents';
+  const title = 'Contrato de agentes del config global';
+
+  if (!info.file || !isPlainObject(info.cfg)) {
+    return buildCheck(id, title, 'info', true, 'Sin config global legible: no hay agentes que validar.');
+  }
+  if (info.schema !== 'v2') {
+    return buildCheck(id, title, 'info', true, `${info.file} usa el esquema legacy (v1, clave agent): no aplica el contrato de agentes v2.`);
+  }
+
+  const agents = isPlainObject(info.cfg.agents) ? info.cfg.agents : null;
+  if (!agents) {
+    return buildCheck(id, title, 'info', true, `${info.file} no declara agents: no hay agentes que validar.`);
+  }
+
+  const offenders = [];
+  for (const [name, cfg] of Object.entries(agents)) {
+    if (!isPlainObject(cfg)) continue;
+    for (const key of Object.keys(cfg)) {
+      if (AGENT_V2_KEYS.has(key)) continue;
+      offenders.push({ name, key, mapped: AGENT_V1_KEYS.get(key) || null });
+    }
+  }
+
+  const total = Object.keys(agents).length;
+  if (offenders.length === 0) {
+    return buildCheck(id, title, 'info', true, `${info.file}: ${total} agente(s) usan solo claves del esquema v2.`);
+  }
+
+  const groups = new Map();
+  for (const item of offenders) {
+    if (!groups.has(item.key)) groups.set(item.key, { mapped: item.mapped, agents: new Set() });
+    groups.get(item.key).agents.add(item.name);
+  }
+  const affected = new Set(offenders.map((item) => item.name)).size;
+  const mappings = [...groups.entries()]
+    .map(([key, group]) => `${key} -> ${group.mapped || 'clave inexistente en v2'} (${sampleAgents(group.agents)})`)
+    .join('; ');
+
+  return buildCheck(
+    id, title, 'error', false,
+    `[ContextBase Error] CB_DOCTOR_AGENT_SCHEMA | doctor.agents | ${info.file} | `
+      + `${affected} de ${total} agentes usan ${groups.size} clave(s) que el host v2 descarta en silencio: ${mappings}. `
+      + 'Renombrar esas claves antes de abrir OpenCode: los agentes afectados cargan sin system prompt ni permisos.'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Check 4: Kilo Code global
 // ---------------------------------------------------------------------------
@@ -345,6 +464,10 @@ function checkGlobalSkills(homeDir) {
 /**
  * Handshake real por stdio: initialize -> tools/list -> cierre de stdin.
  * Prueba que el MCP vive hoy, no que este escrito en un config.
+ *
+ * Cualquier linea de stdout que no sea JSON-RPC valido aborta el chequeo: el host
+ * descarta todo lo que no entienda, asi que un `console.log` en el servidor (ya paso
+ * con contextbase_hook) deja el protocolo mudo y el doctor debe decirlo explicitamente.
  */
 function runMcpHandshake({ binPath, cwd, timeoutMs }) {
   const id = 'mcp-handshake';
@@ -361,7 +484,7 @@ function runMcpHandshake({ binPath, cwd, timeoutMs }) {
     let timer = null;
     let buffer = '';
     let stderr = '';
-    let toolCount = 0;
+    let receivedTools = [];
     let initialized = false;
 
     const finish = (ok, detail) => {
@@ -371,6 +494,13 @@ function runMcpHandshake({ binPath, cwd, timeoutMs }) {
       try { if (child && !child.killed) child.kill(); } catch { /* el proceso ya termino */ }
       resolve(buildCheck(id, title, ok ? 'info' : 'error', ok, detail));
     };
+
+    const contaminated = (line) => finish(
+      false,
+      `[ContextBase Error] CB_DOCTOR_STDOUT | mcp-handshake | ${binPath} | `
+        + `stdout contaminado: ${JSON.stringify(String(line).slice(0, 80))}. `
+        + 'El MCP escribe lineas que no son JSON-RPC y el host descarta el resto del protocolo; quitar console.log del servidor.'
+    );
 
     timer = setTimeout(() => {
       finish(false, `El servidor MCP no completo el handshake en ${timeoutMs} ms (posible cuelgue).`);
@@ -400,15 +530,20 @@ function runMcpHandshake({ binPath, cwd, timeoutMs }) {
         finish(false, `El MCP termino antes de responder initialize (code=${code}${signal ? `, signal=${signal}` : ''}).${tail}`);
         return;
       }
-      if (toolCount < MIN_MCP_TOOLS) {
-        finish(false, `El MCP expone ${toolCount} tools; se esperaban al menos ${MIN_MCP_TOOLS}.${tail}`);
+      const received = new Set(receivedTools);
+      const missing = EXPECTED_MCP_TOOLS.filter((name) => !received.has(name));
+      if (missing.length > 0) {
+        finish(
+          false,
+          `El MCP expone ${receivedTools.length} tools; faltan ${missing.length} de las ${EXPECTED_MCP_TOOLS.length} esperadas: ${missing.join(', ')}.${tail}`
+        );
         return;
       }
       if (code !== 0) {
-        finish(false, `El MCP respondio ${toolCount} tools pero salio con codigo ${code} al cerrar stdin.${tail}`);
+        finish(false, `El MCP respondio ${receivedTools.length} tools pero salio con codigo ${code} al cerrar stdin.${tail}`);
         return;
       }
-      finish(true, `initialize + tools/list OK: ${toolCount} tools y salida limpia (code 0).`);
+      finish(true, `initialize + tools/list OK: ${receivedTools.length} tools y salida limpia (code 0).`);
     });
 
     child.stdout.setEncoding('utf8');
@@ -421,7 +556,19 @@ function runMcpHandshake({ binPath, cwd, timeoutMs }) {
         newline = buffer.indexOf('\n');
         if (!line) continue;
         let message;
-        try { message = JSON.parse(line); } catch { continue; }
+        try {
+          message = JSON.parse(line);
+        } catch {
+          contaminated(line);
+          return;
+        }
+        const validEnvelope = isPlainObject(message)
+          && message.jsonrpc === '2.0'
+          && ('result' in message || 'error' in message || typeof message.method === 'string');
+        if (!validEnvelope) {
+          contaminated(line);
+          return;
+        }
         if (message.id === 1 && message.result) {
           initialized = true;
           try {
@@ -431,7 +578,9 @@ function runMcpHandshake({ binPath, cwd, timeoutMs }) {
             return;
           }
         } else if (message.id === 2 && message.result) {
-          toolCount = Array.isArray(message.result.tools) ? message.result.tools.length : 0;
+          receivedTools = Array.isArray(message.result.tools)
+            ? message.result.tools.map((tool) => (tool && tool.name ? String(tool.name) : '')).filter(Boolean)
+            : [];
           try { child.stdin.end(); } catch { /* se cierra solo al salir */ }
         }
       }
@@ -505,6 +654,7 @@ async function collectChecks(state) {
     checkGlobalOpenCodeConfig(info),
     checkGlobalOpenCodePlugin(info),
     checkGlobalOpenCodeSchema(info),
+    checkGlobalOpenCodeAgents(info),
     checkGlobalKilo(state.homeDir),
     checkGlobalSkills(state.homeDir),
   ];
@@ -612,7 +762,9 @@ function buildResult(checks, fix, startedAt) {
  *
  * Responde en una sola corrida: el config global existe, el MCP esta registrado y
  * apunta a un archivo real, el plugin cumple el contrato, el esquema no esta roto,
- * las skills estan puestas y el servidor MCP responde hoy.
+ * los agentes declarados usan solo claves v2 (un `prompt`/`permission`/`variant` lo
+ * descarta el host en silencio), las skills estan puestas, el servidor MCP responde
+ * hoy con las 26 tools esperadas y su stdout no esta contaminado.
  *
  * Es asincronico por el handshake MCP (check `mcp-handshake`); el resto es lectura
  * sincronica de disco. Nunca lanza: cualquier error interno se devuelve como check

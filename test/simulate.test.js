@@ -154,6 +154,9 @@ test('Catálogo: todos los escenarios declarados se ejecutan y respetan su vered
     const observed = findScenario(report, scenario.id);
     assert.equal(observed.kind, scenario.kind);
     assert.deepEqual(observed.expect, scenario.expect);
+    // Un fallo transitorio (git real del gate antislop) se marca como error y se
+    // reintenta una vez: aqui no puede quedar ninguno, o el catálogo no se cubrió.
+    assert.deepEqual(observed.errors, [], `${scenario.id} no se ejecutó: ` + observed.errors.join('; '));
     const verdicts = Object.entries(observed.outcomes)
       .filter(([, count]) => count > 0)
       .map(([verdict]) => verdict);

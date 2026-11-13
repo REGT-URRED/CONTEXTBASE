@@ -1,0 +1,27 @@
+# Normalizacion de finales de linea: deja que git decida segun el archivo.
+# No se fuerza eol=lf global: el repo vive en Windows y provocaria churn de CRLF.
+* text=auto
+
+# Artefactos generados: no normalizar (se reescriben y no deben generar diffs falsos).
+*.bak-contextbase -text
+contextbase-pack.txt -text
+
+# Binarios: nunca normalizar.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.7z binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.node binary
+*.exe binary
+*.dll binary

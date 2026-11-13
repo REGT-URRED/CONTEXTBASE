@@ -3,6 +3,20 @@
 > Documento operativo. Cada fallo de esta lista rompio OpenCode de verdad, y cada uno tiene hoy
 > una garantia en el codigo y una verificacion concreta. Si algo vuelve a fallar, empieza por aqui.
 
+## Contexto y alcance
+
+Un `plugin` de OpenCode es un modulo que el host carga desde el config; su default export es un
+objeto con `id` y una funcion (`setup` en v2, `server` en v1). En este repositorio es el punto de
+entrada que registra los hooks de contextbase, y la clave `plugins` del esquema v2 es la lista donde
+se declaran.
+
+Este documento registra los fallos de integracion con OpenCode v2 que contextbase ya sufrio y la
+garantia de codigo que hoy los previene. Sirve a quien mantiene el plugin, a quien genera el
+`opencode.json` y a quien diagnostica una instalacion que funciona en un proyecto y falla en otro.
+
+Queda fuera de alcance: el funcionamiento interno del host, el desarrollo de agentes custom mas alla
+de su registro y cualquier version de OpenCode anterior a la v2.
+
 ## 1. Contrato del plugin (OpenCode v2)
 
 El `default export` del plugin **debe ser un objeto con `id` y una funcion**. El contrato que

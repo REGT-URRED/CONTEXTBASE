@@ -61,6 +61,44 @@ function skipHomeDir(targetDir, silent = false) {
   return true;
 }
 
+// Eventos de ciclo de vida validos para hook-run (los que produce hooks.js).
+const LIFECYCLE_EVENTS = new Set([
+  'session-start', 'digest', 'web-pulse', 'task-add', 'task-done',
+  'post-tool', 'session-stop', 'stop', 'post-commit', 'post-merge', 'post-checkout'
+]);
+
+/**
+ * Error de uso: el comando NO se ejecuto (exit 2). Una sola linea accionable.
+ */
+function failUsage(op, detail) {
+  console.error(`${c.red}[ContextBase Error] CB_USAGE | ${op} | ${process.cwd()} | ${detail}${c.reset}`);
+  process.exitCode = 2;
+}
+
+/**
+ * Extrae --scope (en las dos formas: --scope=x y --scope x) y el texto libre.
+ * Los flags sin valor (--worktree, --auto-scope, --json) se descartan.
+ */
+function extractScope(args, startIndex) {
+  let scope = '';
+  const parts = [];
+  for (let i = startIndex; i < args.length; i += 1) {
+    const token = String(args[i]);
+    if (token === '--scope') {
+      const value = args[i + 1];
+      if (value === undefined || String(value).startsWith('--')) return { error: 'falta el valor de --scope' };
+      scope = String(value);
+      i += 1;
+      continue;
+    }
+    if (token === '--scope=') return { error: 'falta el valor de --scope' };
+    if (token.startsWith('--scope=')) { scope = token.slice(8); continue; }
+    if (token.startsWith('--')) continue;
+    parts.push(token);
+  }
+  return { scope, text: parts.join(' ') };
+}
+
 function showHelp() {
   banner();
   console.log(`${c.bold}USO:${c.reset}`);
@@ -312,7 +350,7 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
     if (!taskText) {
       console.log(`${c.yellow}Uso: contextbase task add "<descripción de la tarea>"${c.reset}`);
       process.exitCode = 2;
-      return;
+      return { ok: false, exitCode: 2, message: 'task add requiere el texto de la tarea' };
     }
     const targetHeader = '## Tareas Pendientes / En Progreso';
     const newTask = `- [ ] ${taskText.trim()}`;
@@ -324,41 +362,48 @@ export function runTask(action, taskText, targetDir = process.cwd(), scope = nul
     withLock(tasklistPath, () => writeAtomic(tasklistPath, content));
     console.log(`${c.green}✓ Tarea agregada con éxito:${c.reset} ${taskText}`);
     try { refreshStrands(targetDir); } catch {}
+    return { ok: true, exitCode: 0, message: 'tarea agregada' };
   } else if (action === 'done') {
     if (!taskText) {
       console.log(`${c.yellow}Uso: contextbase task done "<texto o parte de la tarea>"${c.reset}`);
       process.exitCode = 2;
-      return;
+      return { ok: false, exitCode: 2, message: 'task done requiere el texto de la tarea' };
     }
     const lines = content.split('\n');
-    let matched = false;
     const query = taskText.toLowerCase();
-    let completedLine = null;
-    const remainingLines = [];
-
+    const matches = [];
     for (let i = 0; i < lines.length; i++) {
-      if (!matched && lines[i].includes('[ ]') && lines[i].toLowerCase().includes(query)) {
-        completedLine = lines[i].replace('[ ]', '[x]');
-        matched = true;
-        console.log(`${c.green}✓ Tarea completada:${c.reset} ${completedLine.replace('- [x]', '').trim()}`);
-      } else {
-        remainingLines.push(lines[i]);
-      }
+      if (lines[i].includes('[ ]') && lines[i].toLowerCase().includes(query)) matches.push(i);
     }
 
-    if (matched && completedLine) {
-      let newContent = remainingLines.join('\n');
-      const compHeader = '## Tareas Completadas';
-      if (newContent.includes(compHeader)) {
-        newContent = newContent.replace(compHeader, `${compHeader}\n${completedLine}`);
-      } else {
-        newContent = `${compHeader}\n${completedLine}\n\n${newContent}`;
-      }
-      withLock(tasklistPath, () => writeAtomic(tasklistPath, newContent));
-      try { refreshStrands(targetDir); } catch {}
-    } else {
+    // Sin coincidencias: se ejecuto la busqueda y no habia nada que completar.
+    if (matches.length === 0) {
       console.log(`${c.yellow}No se encontró ninguna tarea pendiente que coincida con:${c.reset} "${taskText}"`);
+      process.exitCode = 1;
+      return { ok: false, exitCode: 1, message: `tarea no encontrada: "${taskText}"` };
     }
+
+    // Coincidencia multiple: completar la primera seria elegir al azar. Es uso ambiguo.
+    if (matches.length > 1) {
+      const candidates = matches.map(i => '  - ' + lines[i].replace('- [ ]', '').trim()).join('\n');
+      console.error(`${c.red}[ContextBase Error] CB_USAGE | task done | ${tasklistPath} | coincidencia ambigua (${matches.length}); usa el texto exacto de una sola tarea:${c.reset}\n${candidates}`);
+      process.exitCode = 2;
+      return { ok: false, exitCode: 2, message: `coincidencia ambigua (${matches.length}): ${matches.map(i => lines[i].replace('- [ ]', '').trim()).join(' | ')}` };
+    }
+
+    const completedLine = lines[matches[0]].replace('[ ]', '[x]');
+    const remainingLines = lines.filter((_, i) => i !== matches[0]);
+    let newContent = remainingLines.join('\n');
+    const compHeader = '## Tareas Completadas';
+    if (newContent.includes(compHeader)) {
+      newContent = newContent.replace(compHeader, `${compHeader}\n${completedLine}`);
+    } else {
+      newContent = `${compHeader}\n${completedLine}\n\n${newContent}`;
+    }
+    withLock(tasklistPath, () => writeAtomic(tasklistPath, newContent));
+    console.log(`${c.green}✓ Tarea completada:${c.reset} ${completedLine.replace('- [x]', '').trim()}`);
+    try { refreshStrands(targetDir); } catch {}
+    return { ok: true, exitCode: 0, message: 'tarea completada' };
   } else if (action === 'list') {
     const lines = content.split('\n');
     console.log(`\n${c.bold}LISTA DE TAREAS:${c.reset}\n`);
@@ -516,7 +561,11 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'hook-run') {
-    const evt = args[1] || 'session-start';
+    const evt = String(args[1] || 'session-start').toLowerCase();
+    if (!LIFECYCLE_EVENTS.has(evt)) {
+      failUsage('hook-run', `evento desconocido: ${evt} (validos: ${[...LIFECYCLE_EVENTS].join('|')})`);
+      return;
+    }
     const extra = args.slice(2);
     const out = await runLifecycleHook(evt, process.cwd(), extra);
     if (out) process.stdout.write(String(out) + '\n');
@@ -581,8 +630,15 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'watch' || command === 'daemon') {
+    // El uso se valida ANTES de tocar el proyecto: un subcomando invalido no inicia nada.
+    const sub = args[1] && !args[1].startsWith('--')
+      ? args[1]
+      : (args.includes('--foreground') ? 'foreground' : 'start');
+    if (!['start', 'stop', 'status', 'foreground'].includes(sub)) {
+      failUsage('watch', `subcomando desconocido: ${sub} (usa: start|stop|status|foreground)`);
+      return;
+    }
     await ensureContextBase(process.cwd(), true);
-    const sub = args[1] || (args.includes('--foreground') ? 'foreground' : 'start');
     if ((sub === 'start' || sub === 'foreground') && skipHomeDir(process.cwd())) return;
     if (sub === 'stop') {
       const r = stopDaemonWatcher(process.cwd());
@@ -656,7 +712,23 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'hook') {
-    const result = installGitHook(process.cwd(), args[1] || 'install');
+    const action = args[1] && !args[1].startsWith('--') ? args[1] : 'install';
+    if (!['install', 'remove', 'status'].includes(action)) {
+      failUsage('hook', `accion desconocida: ${action} (usa: install|remove|status)`);
+      return;
+    }
+    if (action === 'status') {
+      const hookPath = path.join(process.cwd(), '.git', 'hooks', 'post-commit');
+      let installed = false;
+      try {
+        installed = fs.existsSync(hookPath) && fs.readFileSync(hookPath, 'utf8').includes('ContextBase autosave');
+      } catch {}
+      console.log(installed
+        ? `${c.green}✓ Hook post-commit de ContextBase instalado.${c.reset}`
+        : `${c.yellow}○ Hook post-commit de ContextBase no instalado.${c.reset}`);
+      return;
+    }
+    const result = installGitHook(process.cwd(), action);
     console.log((result.ok ? c.green + '✓ ' : c.red + '✗ ') + result.message + c.reset);
     // Fuera de un repo Git (o con un hook ajeno) es un fallo real, no un error de uso.
     if (!result.ok) process.exitCode = 1;
@@ -722,13 +794,11 @@ export async function cli(args = process.argv.slice(2)) {
       || (flagMap.json ? 'json' : flagMap.html ? 'html' : positionals[1] || 'json');
     const output = pick(flagMap.output) || pick(flagMap.out) || positionals[2];
     if (!['estado', 'digest'].includes(String(type))) {
-      console.error(`${c.red}Error: tipo no soportado: ${type} (usa "estado" o "digest")${c.reset}`);
-      process.exitCode = 1;
+      failUsage('export', `tipo no soportado: ${type} (usa: export <estado|digest> [json|html] [archivo])`);
       return;
     }
     if (!['json', 'html'].includes(String(format))) {
-      console.error(`${c.red}Error: formato no soportado: ${format} (usa "json" o "html")${c.reset}`);
-      process.exitCode = 1;
+      failUsage('export', `formato no soportado: ${format} (usa: export <estado|digest> [json|html] [archivo])`);
       return;
     }
     const result = exp.exportCommand(process.cwd(), { type: String(type) === 'digest' ? 'digest' : 'state', format: String(format), output });
@@ -809,12 +879,12 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'log') {
+    const parsed = extractScope(args, 1);
+    if (parsed.error) { failUsage('log', parsed.error); return; }
     await ensureContextBase(process.cwd());
-    const msg = args.filter(a => !a.startsWith('--')).slice(1).join(' ');
-    const scopeFlag = (args.find(a => a.startsWith('--scope=')) || '').replace('--scope=', '');
     const autoScope = args.includes('--worktree') || args.includes('--auto-scope');
-    const scope = scopeFlag || (autoScope ? deriveScope(process.cwd()) : null);
-    runLog(msg, process.cwd(), scope);
+    const scope = parsed.scope || (autoScope ? deriveScope(process.cwd()) : null);
+    runLog(parsed.text, process.cwd(), scope);
     return;
   }
 
@@ -825,12 +895,12 @@ export async function cli(args = process.argv.slice(2)) {
       process.exitCode = 2;
       return;
     }
+    const parsed = extractScope(args, 2);
+    if (parsed.error) { failUsage(`task ${subAction}`, parsed.error); return; }
     await ensureContextBase(process.cwd());
-    const text = args.filter(a => !a.startsWith('--')).slice(2).join(' ');
-    const scopeFlag = (args.find(a => a.startsWith('--scope=')) || '').replace('--scope=', '');
     const autoScope = args.includes('--worktree') || args.includes('--auto-scope');
-    const scope = scopeFlag || (autoScope ? deriveScope(process.cwd()) : null);
-    runTask(subAction, text, process.cwd(), scope);
+    const scope = parsed.scope || (autoScope ? deriveScope(process.cwd()) : null);
+    runTask(subAction, parsed.text, process.cwd(), scope);
     return;
   }
 

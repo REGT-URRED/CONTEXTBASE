@@ -299,6 +299,34 @@ const CLAIM_DEBIL = /\btodos\b/i;
 const EVIDENCIA = /\d|%|benchmark|prueba|test|mide|medici[oó]n|medido|medicion/i;
 const ACRONIMOS = new Set(['API', 'URL', 'URI', 'HTTP', 'HTTPS', 'JSON', 'YAML', 'CLI', 'ID', 'OK', 'OS', 'DB', 'SQL', 'CSS', 'HTML', 'JS', 'TS', 'MCP', 'LLM', 'AI', 'UI', 'UX', 'CI', 'CD', 'IO', 'PR', 'RPC', 'TCP', 'UDP', 'GDPR', 'SLA', 'SLO', 'UUID', 'SHA', 'MD', 'PDF', 'CSV', 'TXT', 'XML', 'QA', 'EGM', 'H1', 'H2', 'H3']);
 
+// Palabras españolas que aparecen en mayusculas solo por enfasis. Sin esta lista, el detector
+// de siglas marca PROHIBIDO, MISMO o ACTIVA como "sigla sin explicar" y produce ruido puro.
+const SIGLAS_ES_NO = new Set([
+  'PROHIBIDO', 'MISMO', 'MISMA', 'MISMOS', 'MISMAS', 'ACTIVA', 'ACTIVO',
+  'SI', 'NO', 'YA', 'MAS', 'MENOS', 'TODO', 'TODA', 'NADA', 'NUNCA', 'SIEMPRE',
+]);
+
+// Hogares externos de agentes: son ubicaciones de OTRA herramienta (o del home del usuario),
+// no archivos de este repositorio. Un doc puede mencionarlos sin afirmar que vivan aqui.
+const HOGARES_EXTERNOS = [
+  '.github/', '.vscode/', '.gemini/', '.kilo/', '.kilocode/', '.opencode/', '.cursor/',
+  '.windsurf/', '.continue/', '.agents/', '.aider', '.cline', '.roo',
+];
+
+// Verbos de mencion o estado pasado: la linea narra un hecho historico ("pisaban", "rompia"),
+// no afirma que el archivo exista hoy. Se evalua sobre la linea sin acentos y en minusculas.
+const VERBO_MENCION = /\b(pisaba|pisaban|sobrescribia|sobrescribian|sobrescribio|rompia|rompian|rompio|causaba|causaban|causo|eliminaba|eliminaban|elimino|dejaba|dejaban|dejo\s+de)\b/;
+
+// Marcas de cita/ejemplo inmediatamente antes de la ruta: "como `x`", "por ejemplo `x`",
+// "si existe `x`", "opcional: `x`", "antes `x`". Se exige que la marca este pegada a la ruta:
+// un "antes" lejano en la misma linea no absuelve una afirmacion de existencia.
+const PREPOSICION_MENCION = /(?:como|por\s+ejemplo|si\s+existe|opcional|antes(?:\s+de)?)\s*[:`"'(]?\s*$/;
+
+// Tipo de documento por nombre y H1. El estandar de diseño (alternativas + riesgos) solo aplica
+// a specs/designs reales; un README, un CHANGELOG o un doc de compatibilidad no es un spec.
+const KIND_SPEC = /(?:^|[^a-z])(?:spec|rfc|design|plan|propuesta)(?:[^a-z]|$)|especificaci|dise[nñ]o/;
+const KIND_REFERENCIA = /readme|compatibilidad|changelog|guia|faq|referencia|manual|troubleshoot|diagnostico|notas/;
+
 const CODE_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|ps1|css|scss|less|html|vue|svelte)$/i;
 // Acepta separador posix y Windows: un doc escrito en Windows cita rutas con barra invertida
 // y tambien debe verificarse contra el disco.
@@ -346,6 +374,67 @@ const REF_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|bash|zsh|ps
 
 function refsIn(text) {
   return (stripUrls(text).match(PATH_RE) || []).map(cleanRef).filter(r => r && REF_EXT.test(r));
+}
+
+// Igual que refsIn pero conserva el indice de cada ruta dentro de la linea (ya sin URLs).
+// Sin la posicion no se puede decidir si la ruta viene precedida por "como", "por ejemplo", etc.
+function refsWithPos(text) {
+  const clean = stripUrls(text);
+  const re = new RegExp(PATH_RE.source, 'g');
+  const out = [];
+  let m;
+  while ((m = re.exec(clean))) {
+    const ref = cleanRef(m[0]);
+    if (!ref || !REF_EXT.test(ref)) continue;
+    out.push({ ref, index: m.index, text: clean });
+  }
+  return out;
+}
+
+// Tramos de negrita/cursiva de una linea. Un token en mayusculas dentro de un tramo es enfasis
+// del autor ("**PROHIBIDO.**"), no una sigla tecnica que necesite explicacion.
+function emphasisSpans(text) {
+  const spans = [];
+  const src = String(text || '');
+  const bold = /(\*\*|__)([^\n]*?)\1/g;
+  let m;
+  while ((m = bold.exec(src))) spans.push([m.index, m.index + m[0].length]);
+  const ital = /(^|[^A-Za-z0-9*_])([*_])([^*_\n]+?)\2(?![A-Za-z0-9*_])/g;
+  while ((m = ital.exec(src))) {
+    const start = m.index + m[1].length;
+    spans.push([start, m.index + m[0].length]);
+  }
+  return spans;
+}
+
+function esHogarExterno(ref) {
+  const r = String(ref || '').toLowerCase();
+  return HOGARES_EXTERNOS.some(prefix => r.startsWith(prefix));
+}
+
+// Una ruta es mencion (no afirmacion) si vive en un hogar externo de agentes, si la linea narra
+// un estado pasado o si viene precedida por una marca de ejemplo. En esos casos el doc no afirma
+// que el archivo exista en el proyecto y no corresponde blocker.
+function esMencion(line, index, ref) {
+  if (esHogarExterno(ref)) return true;
+  const flat = deaccent(String(line || '')).toLowerCase();
+  if (VERBO_MENCION.test(flat)) return true;
+  const before = flat.slice(0, Math.max(0, index));
+  return PREPOSICION_MENCION.test(before);
+}
+
+// Clasifica el objetivo por nombre y H1. 'spec' exige el estandar de diseño; 'referencia'
+// (README, CHANGELOG, COMPATIBILIDAD, GUIA, FAQ) no. El nombre del archivo manda: es la
+// declaracion mas estable del tipo de documento.
+function docKind(ctx) {
+  const base = deaccent(path.basename(ctx.rel || ctx.file || '')).toLowerCase();
+  if (KIND_REFERENCIA.test(base)) return 'referencia';
+  if (KIND_SPEC.test(base)) return 'spec';
+  const h1 = ctx.headings.find(h => h.level === 1);
+  const title = deaccent(h1 ? h1.title : '').toLowerCase();
+  if (KIND_SPEC.test(title)) return 'spec';
+  if (KIND_REFERENCIA.test(title)) return 'referencia';
+  return 'general';
 }
 
 function walk(dir) {
@@ -430,8 +519,11 @@ function stableId(persona, dimension, scope) {
   return id;
 }
 
-function mk(persona, severity, dimension, scope, detail, evidence, resolution) {
-  return {
+// `advisory: true` marca una senal de calibracion, no un defecto: el hallazgo se reporta con su
+// persona y su evidencia (trazabilidad), pero no cuenta para el veredicto. Sin este campo, un
+// [CALIBRATE] de estilo se leia como "major pendiente" y el documento quedaba en REFIX por ruido.
+function mk(persona, severity, dimension, scope, detail, evidence, resolution, advisory) {
+  const finding = {
     id: stableId(persona, dimension, scope),
     persona,
     severity,
@@ -442,6 +534,8 @@ function mk(persona, severity, dimension, scope, detail, evidence, resolution) {
     resolution: resolution || (severity === 'nit' ? 'decline' : 'propose_fix'),
     status: 'open',
   };
+  if (advisory) finding.advisory = true;
+  return finding;
 }
 
 // ---------- contexto ----------
@@ -461,7 +555,7 @@ function readTarget(root, target) {
 function buildContext(root, read) {
   const lines = splitLines(read.text);
   const headings = headingsOf(lines);
-  return {
+  const ctx = {
     root,
     file: read.file,
     rel: read.rel,
@@ -472,6 +566,8 @@ function buildContext(root, read) {
     sections: sectionsOf(lines, headings),
     isMd: /\.md$/i.test(read.file),
   };
+  ctx.kind = docKind(ctx);
+  return ctx;
 }
 
 // ---------- checkers deterministas ----------
@@ -564,24 +660,36 @@ function checkStyle(ctx) {
       const m = plain.match(rule.re);
       if (!m) continue;
       if (rule.id === 'banned-word' && hypeWords.has(m[0].toLowerCase())) continue;
+      // [DROP] cosmetico: la propia accion dice "descartar". Se deja fuera del reporte en vez de
+      // ensuciarlo con hallazgos que el revisor mismo no considera un defecto. Un [DROP] major
+      // (hype o palabra de relleno) si es defecto de prosa y se conserva.
+      if (rule.accion === 'DROP' && rule.severity === 'nit') continue;
       const count = rule.id === 'dash-density' ? (plain.match(/\u2014/g) || []).length : 1;
       out.push(mk('egm-style', rule.severity, 'relleno', 'style:' + rule.id + ':' + m[0].toLowerCase().trim(),
         '[' + rule.accion + '] ' + rule.detalle + ' ("' + snippet(m[0]) + '").',
         'linea ' + l.n + ': ' + snippet(plain) + (count > 1 ? ' (' + count + ' guiones)' : ''), rule.severity === 'nit' ? 'decline' : 'propose_fix'));
     }
+    // [CALIBRATE] = el claim necesita evidencia o acotarse, no es un defecto comprobado: se reporta
+    // como advisory y no empuja el veredicto a REFIX.
     if (CLAIM_FUERTE.test(flat) && !EVIDENCIA.test(plain)) {
       const m = flat.match(CLAIM_FUERTE);
-      out.push(mk('egm-style', 'major', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Claim universal sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'propose_fix'));
+      out.push(mk('egm-style', 'major', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Claim universal sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'propose_fix', true));
     } else if (CLAIM_DEBIL.test(flat) && !EVIDENCIA.test(plain)) {
       const m = flat.match(CLAIM_DEBIL);
-      out.push(mk('egm-style', 'nit', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Cuantificador sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline'));
+      out.push(mk('egm-style', 'nit', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Cuantificador sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline', true));
     }
-    const acro = plain.match(/\b[A-Z]{2,}\b/g);
-    if (acro) {
-      for (const a of new Set(acro)) {
-        if (ACRONIMOS.has(a)) continue;
-        out.push(mk('egm-style', 'nit', 'jargon', 'style:jargon:' + a, '[CALIBRATE] Sigla sin explicar: "' + a + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline'));
-      }
+    // Siglas: solo tokens de 2 a 5 letras, fuera de negrita/cursiva, que no sean palabra común
+    // del español ni un acrónimo técnico conocido.
+    const spans = emphasisSpans(plain);
+    const acroRe = /\b[A-Z]{2,5}\b/g;
+    const reportadas = new Set();
+    let m;
+    while ((m = acroRe.exec(plain))) {
+      const sigla = m[0];
+      if (ACRONIMOS.has(sigla) || SIGLAS_ES_NO.has(sigla) || reportadas.has(sigla)) continue;
+      if (spans.some(([a, b]) => m.index >= a && m.index < b)) continue;
+      reportadas.add(sigla);
+      out.push(mk('egm-style', 'nit', 'jargon', 'style:jargon:' + sigla, '[CALIBRATE] Sigla sin explicar: "' + sigla + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline', true));
     }
   }
   return { persona: 'egm-style', status: 'completed', findings: out };
@@ -617,7 +725,7 @@ function checkComprehension(ctx) {
     if (PATH_ANY.test(l.text)) continue;
     out.push(mk('egm-comprehension', 'nit', 'flujo', 'vague:' + m[0].toLowerCase(),
       '[RELOCATE] Referencia generica sin ruta: "' + snippet(m[0]) + '".',
-      'linea ' + l.n + ': ' + snippet(l.text), 'decline'));
+      'linea ' + l.n + ': ' + snippet(l.text), 'decline', true));
   }
   for (const s of ctx.sections) {
     if (s.level === 1) continue;
@@ -650,12 +758,15 @@ function checkImplementationReadiness(ctx) {
         'linea ' + s.n + ': ' + snippet(line), 'propose_fix'));
     }
   }
+  // El plan de pruebas se exige a un spec de implementacion, no a cualquier prosa que mencione
+  // "test": un doc de compatibilidad explica fallos, no promete una suite. En documentos de
+  // referencia o generales el requisito queda como advisory (se reporta, no bloquea).
   const mentionsTests = /\b(test|pruebas?|QA)\b/i.test(ctx.text);
   const hasTestSection = ctx.headings.some(h => /prueba|test|qa/i.test(h.title));
   if (mentionsTests && !hasTestSection) {
     out.push(mk('egm-implementation-readiness', 'major', 'test-plan', 'tests:missing',
       'El documento menciona pruebas pero no tiene seccion de plan de pruebas.',
-      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix'));
+      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix', ctx.kind !== 'spec'));
   }
   const hasImplSection = ctx.headings.some(h => /implementa|fase|hito/i.test(h.title));
   if (hasImplSection && !/archivo|file/i.test(ctx.text)) {
@@ -670,6 +781,9 @@ function checkDesign(ctx) {
   if (!ctx.isMd) return skipped('egm-design');
   const out = [];
   if (ctx.headings.length < 3) return { persona: 'egm-design', status: 'completed', findings: out };
+  // El estandar de alternativas/riesgos es de specs y diseños. Un README, un CHANGELOG o un
+  // documento de compatibilidad no es un spec: exigirle "alternativas" inventa un major.
+  if (ctx.kind === 'referencia') return { persona: 'egm-design', status: 'completed', findings: out };
   if (!ctx.headings.some(h => /alternativ/i.test(h.title))) {
     out.push(mk('egm-design', 'major', 'alternativas', 'section:alternativas',
       'Falta la seccion de alternativas exigida por el estandar.',
@@ -688,22 +802,38 @@ function checkCodebaseDetails(ctx) {
   const occ = new Map();
   for (const l of ctx.lines) {
     if (l.code) continue;
-    for (const ref of refsIn(l.text)) {
-      if (!occ.has(ref)) occ.set(ref, []);
-      occ.get(ref).push({ n: l.n, text: l.text, creation: CREATION.test(l.text) });
+    for (const hit of refsWithPos(l.text)) {
+      if (!occ.has(hit.ref)) occ.set(hit.ref, []);
+      occ.get(hit.ref).push({
+        n: l.n,
+        text: hit.text,
+        creation: CREATION.test(l.text),
+        mention: esMencion(hit.text, hit.index, hit.ref),
+      });
     }
   }
   for (const [ref, list] of occ) {
     if (ref.endsWith('/')) continue;
-    if (list.every(o => o.creation)) continue;
+    // Solo una ocurrencia que AFIRMA existencia puede ser blocker. Una mencion historica
+    // ("pisaban archivos completos") o un hogar externo de agentes no afirma que el archivo
+    // viva en este proyecto.
+    const afirmaciones = list.filter(o => !o.creation && !o.mention);
+    const menciones = list.filter(o => !o.creation && o.mention);
     // Se resuelve contra la raiz del proyecto y tambien contra el directorio del objetivo:
     // un import relativo al propio archivo es correcto aunque no exista en la raiz.
-    if (fs.existsSync(path.join(ctx.root, ref))) continue;
-    if (fs.existsSync(path.join(path.dirname(ctx.file), ref))) continue;
-    const first = list.find(o => !o.creation);
-    out.push(mk('egm-codebase-details', 'blocker', 'referencias', 'ref:' + ref,
-      'El documento da por existente "' + ref + '" pero ese archivo no existe en el proyecto.',
-      'linea ' + first.n + ': ' + snippet(first.text), 'propose_fix'));
+    const existe = fs.existsSync(path.join(ctx.root, ref)) || fs.existsSync(path.join(path.dirname(ctx.file), ref));
+    if (afirmaciones.length && !existe) {
+      const first = afirmaciones[0];
+      out.push(mk('egm-codebase-details', 'blocker', 'referencias', 'ref:' + ref,
+        'El documento da por existente "' + ref + '" pero ese archivo no existe en el proyecto.',
+        'linea ' + first.n + ': ' + snippet(first.text), 'propose_fix'));
+    } else if (!afirmaciones.length && menciones.length && !existe) {
+      // Senal conservada sin peso en el veredicto: se ve en el reporte, no bloquea.
+      const first = menciones[0];
+      out.push(mk('egm-codebase-details', 'nit', 'referencias', 'ref-mencion:' + ref,
+        '[INFO] Mencion de "' + ref + '" (hogar externo de agentes, ejemplo o estado pasado): no se exige que exista en el proyecto.',
+        'linea ' + first.n + ': ' + snippet(first.text), 'decline', true));
+    }
   }
   return { persona: 'egm-codebase-details', status: 'completed', findings: out };
 }
@@ -800,10 +930,18 @@ const CHECKERS = [
 
 // ---------- motor de revision ----------
 
+// Un hallazgo advisory es una senal de calibracion: se reporta, pero no cuenta para el veredicto.
 function countBy(findings) {
   const c = { blocker: 0, major: 0, nit: 0 };
-  for (const f of findings) if (f && c[f.severity] !== undefined) c[f.severity]++;
+  for (const f of findings) {
+    if (!f || f.advisory) continue;
+    if (c[f.severity] !== undefined) c[f.severity]++;
+  }
   return c;
+}
+
+function countAdvisory(findings) {
+  return findings.filter(f => f && f.advisory).length;
 }
 
 function dedupeById(findings) {
@@ -832,7 +970,7 @@ const NOT_EXECUTED = new Set(['not run', 'error']);
 
 function summaryOf(findings, reviewers) {
   const c = countBy(findings);
-  const open = findings.filter(f => f.status === 'open');
+  const open = findings.filter(f => f.status === 'open' && !f.advisory);
   const oc = countBy(open);
   const dims = [...new Set(findings.map(f => f.dimension))].sort();
   const failed = reviewers.filter(r => NOT_EXECUTED.has(r.status)).length;
@@ -841,6 +979,7 @@ function summaryOf(findings, reviewers) {
     blocker: c.blocker,
     major: c.major,
     nit: c.nit,
+    advisory: countAdvisory(findings),
     abiertos: { total: open.length, blocker: oc.blocker, major: oc.major, nit: oc.nit },
     revisores: {
       total: reviewers.length,
@@ -864,6 +1003,8 @@ function detectChurn(current, previous) {
   }
   for (const f of current) {
     if (f.status === 'fixed' || f.status === 'settled') continue;
+    // Un advisory no es un fix reabierto: no puede disparar churn ni escalado.
+    if (f.advisory) continue;
     if (fixed.has(f.scope) || fixed.has(f.id)) {
       return { id: f.id, scope: f.scope, persona: f.persona };
     }
@@ -972,10 +1113,14 @@ function roundIsClean(findings, reviewers) {
 
 export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previous } = {}) {
   const root = path.resolve(cwd || process.cwd());
-  const read = readTarget(root, target);
+  // Sin --target se revisa el mismo objetivo por defecto que usa el pulso
+  // (el documento de diseno mas reciente de docs/); antes se resolvia contra el
+  // cwd y un comando recomendado por el propio digest terminaba en FAIL espurio.
+  const resolvedTarget = target || egmPulseTarget(root, null) || '';
+  const read = readTarget(root, resolvedTarget);
   if (!read.ok) {
     const result = {
-      target: String(target || ''),
+      target: String(resolvedTarget || ''),
       rounds: 0,
       findings: [],
       summary: summaryOf([], []),
@@ -1121,7 +1266,8 @@ export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } =
         fixedScopes.add(scopeKey(f));
       }
     }
-    const open = resolved.filter(f => f.status === 'open');
+    // Los advisory no cuentan como abiertos: una ronda con solo senales de calibracion es limpia.
+    const open = resolved.filter(f => f.status === 'open' && !f.advisory);
     const blockers = open.filter(f => f.severity === 'blocker').length;
     const majors = open.filter(f => f.severity === 'major').length;
     openBlockers = Math.max(openBlockers, blockers);
@@ -1349,16 +1495,17 @@ export function egmReport(result) {
   L.push('- blocker: ' + (s.blocker || 0));
   L.push('- major: ' + (s.major || 0));
   L.push('- nit: ' + (s.nit || 0));
+  L.push('- advisory: ' + (s.advisory || 0));
   L.push('- total: ' + (s.total || 0));
   L.push('');
   L.push('## Hallazgos');
   if (!r.findings || !r.findings.length) L.push('(sin hallazgos)');
   else {
-    L.push('| id | persona | severidad | scope | detalle |');
-    L.push('| --- | --- | --- | --- | --- |');
+    L.push('| id | persona | severidad | scope | detalle | advisory |');
+    L.push('| --- | --- | --- | --- | --- | --- |');
     // Mismo orden que el resultado: primero lo que bloquea.
     for (const f of orderBySeverity(r.findings)) {
-      L.push('| ' + f.id + ' | ' + f.persona + ' | ' + f.severity + ' | ' + escapeCell(f.scope) + ' | ' + escapeCell(f.detail) + ' |');
+      L.push('| ' + f.id + ' | ' + f.persona + ' | ' + f.severity + ' | ' + escapeCell(f.scope) + ' | ' + escapeCell(f.detail) + ' | ' + (f.advisory ? 'si' : 'no') + ' |');
     }
   }
   L.push('');
@@ -1443,7 +1590,8 @@ function egmPulseCounts(findings) {
   const counts = {};
   for (const severidad of EGM_SEVERIDAD_ORDEN) counts[severidad] = 0;
   for (const f of findings || []) {
-    if (!f || !EGM_SEVERIDADES[f.severity]) continue;
+    // Mismo criterio que el veredicto: un advisory se reporta en el informe, no se cuenta.
+    if (!f || f.advisory || !EGM_SEVERIDADES[f.severity]) continue;
     counts[f.severity]++;
   }
   return counts;

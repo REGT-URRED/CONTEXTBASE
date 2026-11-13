@@ -488,7 +488,7 @@ export async function simulateArbitration({
     }
   };
 
-  const executeItem = async ({ scenario, r, itemSeed }) => {
+  const runItem = async ({ scenario, r, itemSeed }) => {
     const dir = path.join(baseRoot, `s-${scenario.id}-r${r}`);
     const runId = `sim-${scenario.id}-${r}`;
     const rng = mulberry32(itemSeed);
@@ -511,6 +511,26 @@ export async function simulateArbitration({
     } finally {
       cleanup(dir);
     }
+  };
+
+  // Un escenario puede fallar por una causa transitoria (antislop lanza git real y
+  // bajo carga puede agotar el timeout). Se reintenta una vez y, si persiste, el
+  // fallo se registra como error del escenario: nunca se traga en silencio ni se
+  // convierte en "0 outcomes", que es indistinguible de "sin datos".
+  const executeItem = async (item) => {
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await runItem(item);
+      } catch (err) {
+        lastError = err;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+    return {
+      scenarioId: item.scenario.id,
+      error: lastError && lastError.message ? lastError.message : String(lastError),
+    };
   };
 
   // Pool de workers: el trabajo es síncrono, así que el paralelismo se intercala
@@ -541,23 +561,26 @@ export async function simulateArbitration({
 
   const scenarios = active.map((scenario) => {
     const rows = perScenario.get(scenario.id) || [];
+    const ok = rows.filter((row) => !row.error);
+    const errors = rows.filter((row) => row.error).map((row) => row.error);
     const outcomes = { PASS: 0, REFIX: 0, RERUN: 0, FAIL: 0 };
     let scoreSum = 0;
     let attemptsSum = 0;
     let firstTryPass = 0;
-    for (const row of rows) {
+    for (const row of ok) {
       outcomes[row.verdict] = (outcomes[row.verdict] || 0) + 1;
       scoreSum += row.score;
       attemptsSum += row.attempts;
       if (row.firstVerdict === 'PASS') firstTryPass += 1;
     }
-    const n = rows.length || 1;
+    const n = ok.length || 1;
     return {
       id: scenario.id,
       title: scenario.title,
       kind: scenario.kind,
       expect: scenario.expect.slice(),
       outcomes,
+      errors,
       passRate: round4(outcomes.PASS / n),
       meanScore: round2(scoreSum / n),
       meanAttempts: round2(attemptsSum / n),

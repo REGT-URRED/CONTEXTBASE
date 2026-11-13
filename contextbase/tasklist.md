@@ -5,6 +5,12 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] [2026-11-13] Ola 1 de hardening - contencion y atomicidad: helpers en `sandbox.js` (`CB_PATH_ESCAPE`), estado validado y escritura atomica en `swarm.js` (`CB_STATE_CORRUPT`), id validado en `snapshot.js`, migracion unica de baseline en `guard.js`, `writeAtomic` sin `.tmp` y lock con token en `fsutil.js`, rollback de tejido en `web.js` y `applySandbox` reversible (`CB_SANDBOX_APPLY`). `test/hardening-containment.test.js` 10/10
+- [x] [2026-11-13] Ola 1 de hardening - backup y exclude: respaldo `.bak-contextbase-YYYYMMDD-HHmmss` con `.N`, `COPYFILE_EXCL` y retencion 5; `ensureGitExclude` sobre el `info/exclude` del repo comun. `test/autoconfig-backup-exclude.test.js` 10/10
+- [x] [2026-11-13] Ola 1 de hardening - calibracion EGM: advisory vs defecto, siglas con stoplist, mencion vs afirmacion de rutas y requisitos por tipo de documento; `docs/COMPATIBILIDAD-OPENCODE.md` queda con 0 blockers. `test/egm-calibration.test.js` 6/6 y suite EGM 49/49
+- [x] [2026-11-13] Ola 1 de hardening - CLI y MCP: contrato de exit 0/1/2, formato `[ContextBase Error]` con `CB_USAGE`, enums y numericos validados antes de efectos, `task done` ambiguo sin completar, sandbox tipado, y guardas MCP (`installStdoutGuard`, `-32602`, EPIPE, senales, drenaje de stdin). `test/hardening-cli-mcp.test.js` 17/17
+- [x] [2026-11-13] Ola 1 de hardening - observabilidad: `doctor` con 26 tools esperadas y check `global-opencode-agents`, reglas ilegibles en `unreadable[]`, presupuesto de red y TTL en mantenimiento, `isRelevantPath` en minusculas y `.gitattributes`. `test/hardening-observability.test.js` 7/7
+- [x] [2026-11-13] Verificacion de cierre de la ola 1: suite completa 268/268, `verify --rounds 2` con PUERTA OK y `doctor` 7/8 ok sin fallos
 - [x] [2026-11-13] "Plugin failed: contextbase-auto": rutas de archivo eliminadas de `plugin`/`plugins` y config de proyecto en el dialecto del host
 - [x] [2026-11-13] Instalacion global como copia real (independiente de `D:\PROCESO`): MCP y plugin apuntan a `%APPDATA%\npm\node_modules\contextbase`
 - [x] [2026-11-13] Handshake del doctor en sandbox temporal sin residuos
@@ -108,6 +114,10 @@ Seguimiento del estado de tareas con alto contraste visual.
 
 - [x] [2026-11-13] Residuo home/opencode.json: corregido (guard de home; el home ya no se inicializa como proyecto)
 ## Tareas Pendientes / En Progreso
+- [x] [2026-11-13] `egm review` sin `--target` resuelve el objetivo por defecto del pulso (docs/ mas reciente) en vez de fallar contra el cwd. `test/egm-calibration.test.js` 8/8
+- [x] [2026-11-13] Simulador del Arbitro: reintento ante fallo transitorio y `errors[]` por escenario, sin tragarse el fallo como "0 outcomes". `test/simulate.test.js` 8/8
+- [ ] Ola 2 de hardening: locks de `autoEnsure`, CAS del arbitro sobre `lastArbitratedAt`, lock + merge de `baseline.json`, politica de retry/backoff, precondiciones git, `execFile` en lugar de `execSync`, encoding UTF-8 en PowerShell y nombres reservados de Windows
+- [ ] Cobertura de CLI: cerrar los 19 gaps detectados en la ola 1
 - [x] Tool MCP `contextbase_terminals` (list/close/send) integrado y testeado; soporte send nativo: opencode verificado, kilo verificado (v7.8.27, `kilo run --session`); agentes sin sesión nativa (claude/codex, CLIs no instalados) cubiertos por launcher universal `--universal`; inyección de teclas en TUI no soportada por diseño
 
 - [x] `strands_runner.py` verificado: py_compile OK y ejecución completa en modo seco (imprime contexto y tareas; salto humano solo por critical/high o deriva del guardia). Capa SDK requiere `pip install strands-agents` (decisión del usuario)

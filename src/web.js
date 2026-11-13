@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { scanFiles } from './scanner.js';
 import * as slop from './slop.js';
-import { writeAtomic } from './fsutil.js';
+import { cbError, emitCbError, writeAtomic } from './fsutil.js';
+import { isValidId, requireId, resolveInside } from './sandbox.js';
 import {
   defaultDeps,
   latestRun,
@@ -48,14 +49,40 @@ function listProjectFiles(root) {
 }
 
 /**
+ * Ruta absoluta y contenida para contextbase/<baseRel>/<run>.
+ * Un run manipulado ("..", "../..", absolutos) lanza CB_PATH_ESCAPE.
+ */
+function runArea(root, baseRel, run, op) {
+  const id = requireId(run, op, 'id de run');
+  return resolveInside(path.join(path.resolve(root), baseRel), id, { op, what: 'id de run' });
+}
+
+/** Ruta absoluta de un campo de worker validada dentro del proyecto. */
+function workerFile(root, worker, field, op) {
+  const value = worker ? worker[field] : undefined;
+  if (typeof value !== 'string' || value === '') {
+    throw cbError(
+      'CB_STATE_SCHEMA',
+      `${op}.${field}`,
+      String(worker && worker.id),
+      `el worker no tiene "${field}" como ruta valida; el estado esta corrupto.`
+    );
+  }
+  return resolveInside(path.resolve(root), value, { op: `${op}.${field}`, what: `ruta "${field}" del worker` });
+}
+
+/**
  * Sincroniza los artefactos de una corrida entre contextbase/swarm/<run> y contextbase/web/<run>
  * para que ambos espacios estén siempre espejados y limpios dentro de contextbase/.
  */
 export function syncRunMirror(cwd, run) {
   const root = path.resolve(cwd || process.cwd());
   if (!run) return;
-  const swarmRunDir = path.join(root, SWARM_DIR, run);
-  const webRunDir = path.join(root, WEB_DIR, run);
+  if (!isValidId(run)) {
+    throw cbError('CB_PATH_ESCAPE', 'syncRunMirror', String(run), `el id de run "${run}" no es valido; usa solo letras, numeros, punto, guion y guion bajo.`);
+  }
+  const swarmRunDir = runArea(root, SWARM_DIR, run, 'syncRunMirror');
+  const webRunDir = runArea(root, WEB_DIR, run, 'syncRunMirror');
   if (!fs.existsSync(swarmRunDir) && !fs.existsSync(webRunDir)) return;
 
   const copyTree = (src, dest) => {
@@ -279,7 +306,7 @@ export function buildSequentialSubagents({ run, workerId, spiderName, preySegmen
  */
 export function hydrateWorktreeMemory(rootCwd, worktreeRel, spiderMeta = {}) {
   const root = path.resolve(rootCwd || process.cwd());
-  const wtAbs = path.isAbsolute(worktreeRel) ? worktreeRel : path.join(root, worktreeRel);
+  const wtAbs = resolveInside(root, String(worktreeRel), { op: 'hydrateWorktreeMemory', what: 'ruta del worktree' });
   if (!fs.existsSync(wtAbs)) return { hydrated: false, files: [] };
 
   const hydratedFiles = [];
@@ -465,7 +492,7 @@ export function checkWebIntegrity(cwd, state, deps) {
   const collisions = [];
 
   for (const w of state.workers || []) {
-    const wt = path.join(root, w.worktree);
+    const wt = workerFile(root, w, 'worktree', 'checkWebIntegrity');
     const touched = new Set();
     try {
       const diffOut = d.exec(['diff', '--name-only', state.base, w.branch], { cwd: root });
@@ -609,7 +636,11 @@ export function writeFlowAndMetrics(cwd, state, { statusInfo, arbitration, econo
       : null,
   };
 
-  const dirs = [path.join(root, SWARM_DIR, state.run), path.join(root, WEB_DIR, state.run)];
+  const dirs = [
+    runArea(root, SWARM_DIR, state.run, 'writeFlowAndMetrics'),
+    runArea(root, WEB_DIR, state.run, 'writeFlowAndMetrics'),
+  ];
+
   for (const d of dirs) {
     fs.mkdirSync(d, { recursive: true });
     writeAtomic(path.join(d, 'flow.md'), flowMd);
@@ -698,7 +729,7 @@ export function arbitrateWeb({ cwd, run, autoFix = true, maxRetries = 2 } = {}, 
 
     // 3. Evaluar Delivery Gate Antislop en el worktree (20 puntos)
     let slopFindings = 0;
-    const wtAbs = path.join(root, w.worktree);
+    const wtAbs = workerFile(root, w, 'worktree', 'arbitrateWeb');
     if (fs.existsSync(wtAbs) && fs.existsSync(path.join(wtAbs, '.git'))) {
       try {
         const slopRes = slop.scan(wtAbs, { base: state.base });
@@ -761,7 +792,7 @@ export function arbitrateWeb({ cwd, run, autoFix = true, maxRetries = 2 } = {}, 
         });
         writeRefixFile(root, state.run, w.id, refixContent);
         try {
-          const spawned = d.spawn(path.join(root, w.launcher), path.join(root, w.worktree));
+          const spawned = d.spawn(workerFile(root, w, 'launcher', 'arbitrateWeb'), workerFile(root, w, 'worktree', 'arbitrateWeb'));
           if (spawned && spawned.pid) w.pid = spawned.pid;
           actionTaken = `relaunched_attempt_${w.retries}`;
         } catch {
@@ -875,9 +906,10 @@ function buildRefixPacket({ run, worker, verdict, score, defects, attempt, maxRe
 }
 
 function writeRefixFile(root, run, workerId, content) {
+  const worker = requireId(workerId, 'writeRefixFile', 'id de worker');
   const dirs = [
-    path.join(root, SWARM_DIR, run, workerId),
-    path.join(root, WEB_DIR, run, workerId),
+    path.join(runArea(root, SWARM_DIR, run, 'writeRefixFile'), worker),
+    path.join(runArea(root, WEB_DIR, run, 'writeRefixFile'), worker),
   ];
   for (const d of dirs) {
     fs.mkdirSync(d, { recursive: true });
@@ -937,8 +969,33 @@ export function webMetrics({ cwd, run } = {}, deps) {
 }
 
 /**
+ * Revierte las fusiones de un tejido fallido: aborta el merge en curso y vuelve al
+ * commit previo (`reset --hard`). Devuelve que acciones se ejecutaron y cuales fallaron.
+ */
+function rollbackWeave(root, deps, prevHead, wovenBranches) {
+  const actions = [];
+  const failed = [];
+  try {
+    deps.exec(['merge', '--abort'], { cwd: root });
+    actions.push('merge --abort');
+  } catch {
+    // no habia un merge en curso: el abort no es necesario
+  }
+  if (prevHead) {
+    try {
+      deps.exec(['reset', '--hard', prevHead], { cwd: root });
+      actions.push(`reset --hard ${String(prevHead).slice(0, 12)}`);
+    } catch (err) {
+      failed.push(`reset --hard: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return { actions, failed, rolledBack: wovenBranches.slice().reverse() };
+}
+
+/**
  * Teje (verifica e integra opcionalmente) las ramas de todas las Arañas en PASS
  * asegurando que ninguna rompa la línea de otra en la telaraña.
+ * Si una fusión falla, revierte las anteriores y reporta el punto exacto de fallo.
  */
 export function weaveWeb({ cwd, run, merge = false } = {}, deps) {
   const root = path.resolve(cwd || process.cwd());
@@ -952,19 +1009,41 @@ export function weaveWeb({ cwd, run, merge = false } = {}, deps) {
   const wovenBranches = [];
 
   if (merge && integrity.intact && blocked.length === 0) {
-    for (const s of passed) {
+    let prevHead = null;
+    try {
+      prevHead = String(d.exec(['rev-parse', 'HEAD'], { cwd: root }) || '').trim() || null;
+    } catch {
+      prevHead = null;
+    }
+    for (let i = 0; i < passed.length; i += 1) {
+      const s = passed[i];
       try {
         d.exec(['merge', '--no-ff', '-m', `chore(web): tejer hilo ${s.id} (${s.branch}) en ${state.run}`, s.branch], {
           cwd: root,
         });
         wovenBranches.push(s.branch);
       } catch (err) {
+        const rollback = rollbackWeave(root, d, prevHead, wovenBranches);
+        const error = cbError(
+          'CB_WEAVE_ROLLBACK',
+          'weaveWeb',
+          root,
+          `fallo la fusion ${i + 1}/${passed.length} de "${s.branch}" (${err && err.message ? err.message : err}); se revirtieron ${wovenBranches.length} rama(s) ya tejida(s)${
+            rollback.failed.length ? ` con fallos en: ${rollback.failed.join('; ')}` : ''
+          }. Corrige el conflicto de "${s.branch}" contra "${state.base}" y reintenta el tejido.`
+        );
+        emitCbError(error);
         return {
           run: state.run,
           ok: false,
           intact: false,
+          failedBranch: s.branch,
           wovenBranches,
-          error: `Error al fusionar ${s.branch}: ${err.message}`,
+          rolledBack: rollback.rolledBack,
+          rollbackActions: rollback.actions,
+          rollbackFailures: rollback.failed,
+          code: error.code,
+          error: error.message,
         };
       }
     }
@@ -1017,8 +1096,8 @@ export function autoFinalizeSpiderWorktree(worktreeCwd, changedFiles = [], deps)
     const worker = state.workers.find((w) => w.id === meta.spiderId);
     if (!worker) return null;
 
-    const resultAbs = path.join(root, worker.result);
-    const statusAbs = path.join(root, worker.status);
+    const resultAbs = workerFile(root, worker, 'result', 'autoFinalizeSpiderWorktree');
+    const statusAbs = workerFile(root, worker, 'status', 'autoFinalizeSpiderWorktree');
 
     if (!fs.existsSync(resultAbs) && changedFiles.length > 0) {
       const autoResult = [

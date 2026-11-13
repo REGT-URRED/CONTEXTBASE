@@ -24,7 +24,8 @@ __pycache__/
 contextbase/snapshot/
 
 # Backups de configuracion del agente (locales, no se versionan)
-*.bak-contextbase
+*.bak-contextbase*
+*.bak-contextbase-*
 
 # External tool artifacts (gentle-ai skill registry)
 .atl/

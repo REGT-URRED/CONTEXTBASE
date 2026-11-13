@@ -242,6 +242,7 @@ test('P0.3 uso incorrecto y errores de ejecucion devuelven exit no cero', () => 
   const r4 = cli(['restore', 'id-que-no-existe'], dir);
   assert.equal(r4.status, 1, 'restore de id inexistente -> exit 1 (ejecucion)');
   const r5 = cli(['export', 'estado', 'yaml'], dir);
-  assert.equal(r5.status, 1, 'export con formato no soportado -> exit 1');
+  // Cambio de contrato deliberado: un formato invalido es uso incorrecto, no fallo de ejecucion.
+  assert.equal(r5.status, 2, 'export con formato no soportado -> exit 2 (uso)');
   fs.rmSync(dir, { recursive: true, force: true });
 });

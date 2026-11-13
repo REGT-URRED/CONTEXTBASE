@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { writeAtomic } from './fsutil.js';
+import { cbError, emitCbError, writeAtomic } from './fsutil.js';
+import { resolveInside } from './sandbox.js';
 
 export const GUARDED_FILES = [
   'AGENTS.md',
@@ -19,15 +20,35 @@ export const REPAIR_ALLOWLIST = {
   '.windsurfrules': 'https://raw.githubusercontent.com/REGT-URRED/CONTEXTBASE/main/.windsurfrules'
 };
 
+/**
+ * Normaliza una entrada de guarded.json a una ruta relativa contenida en `cwd`.
+ * Una entrada que escapa (absoluta, con ".." o con unidad de disco) se descarta y se
+ * reporta por stderr: el archivo vigilado jamas puede vivir fuera del proyecto.
+ */
+function safeGuardedEntry(cwd, entry) {
+  if (typeof entry !== 'string') return null;
+  const rel = entry.trim().replace(/\\/g, '/');
+  if (!rel || rel.includes('\0')) return null;
+  try {
+    resolveInside(cwd, rel, { op: 'loadGuarded', what: 'entrada de guarded.json' });
+  } catch (err) {
+    emitCbError(err);
+    return null;
+  }
+  return rel;
+}
+
 export function loadGuarded(cwd) {
+  const root = path.resolve(cwd);
   const base = [...GUARDED_FILES];
-  const file = path.join(cwd, 'contextbase', 'guarded.json');
+  const file = path.join(root, 'contextbase', 'guarded.json');
   try {
     if (fs.existsSync(file)) {
       const arr = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (Array.isArray(arr)) {
         for (const x of arr) {
-          if (typeof x === 'string' && !base.includes(x)) base.push(x);
+          const rel = safeGuardedEntry(root, x);
+          if (rel && !base.includes(rel)) base.push(rel);
         }
       }
     }
@@ -35,10 +56,41 @@ export function loadGuarded(cwd) {
   return base;
 }
 
+/**
+ * Hash de contenido con fin de linea normalizado (CRLF -> LF).
+ * Un checkout que convierte CRLF/LF no debe reportar deriva: el contenido semantico es el mismo.
+ */
+export function normalizeEolBuffer(buf) {
+  const source = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf));
+  if (source.indexOf(0x0d) === -1) return source;
+  const chunks = [];
+  let start = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === 0x0d && source[i + 1] === 0x0a) {
+      chunks.push(source.subarray(start, i));
+      start = i + 1;
+    }
+  }
+  chunks.push(source.subarray(start));
+  return Buffer.concat(chunks);
+}
+
 export function hashFile(p) {
   try {
     const buf = fs.readFileSync(p);
-    return crypto.createHash('sha256').update(buf).digest('hex');
+    return crypto.createHash('sha256').update(normalizeEolBuffer(buf)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hash legado (bytes crudos) para compatibilidad con baseline.json generados antes de
+ * la normalizacion de fin de linea. Solo se usa como fallback de una vez.
+ */
+function hashFileRaw(p) {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
   } catch {
     return null;
   }
@@ -62,7 +114,17 @@ export function refreshBaseline(cwd, files) {
   const root = path.resolve(cwd);
   const file = path.join(root, 'contextbase', 'baseline.json');
   const list = Array.isArray(files) && files.length > 0
-    ? files.map(f => String(f).replace(/\\/g, '/'))
+    ? files
+        .map(f => String(f).replace(/\\/g, '/'))
+        .filter(f => {
+          try {
+            resolveInside(root, f, { op: 'refreshBaseline', what: 'archivo guardado' });
+            return true;
+          } catch (err) {
+            emitCbError(err);
+            return false;
+          }
+        })
     : loadGuarded(root);
   const b = readBaselineFile(root) || { files: {}, created: new Date().toISOString() };
   if (!b.files) b.files = {};
@@ -129,11 +191,13 @@ export function scanSuspicious(text) {
 }
 
 export function check(cwd) {
-  const b = baseline(cwd);
-  const guarded = loadGuarded(cwd);
+  const root = path.resolve(cwd);
+  const b = baseline(root);
+  const guarded = loadGuarded(root);
   const drifts = [];
+  let baselineDirty = false;
   for (const rel of guarded) {
-    const full = path.join(cwd, rel);
+    const full = path.join(root, rel);
     const exists = fs.existsSync(full);
     const nowHash = exists ? hashFile(full) : null;
     const base = (b.files && b.files[rel]) || null;
@@ -163,11 +227,28 @@ export function check(cwd) {
     if (exists && baseHash !== nowHash) {
       if (baseHash === null) {
         drifts.push({ file: rel, kind: 'modified', reason: 'new file not in baseline' });
+      } else if (hashFileRaw(full) === baseHash) {
+        // Baseline generado antes de normalizar fin de linea: se migra una sola vez al
+        // hash normalizado sin reportar deriva falsa.
+        b.files[rel] = { hash: nowHash, mtime: fileMtimeIso(full) };
+        baselineDirty = true;
       } else {
         drifts.push({ file: rel, kind: 'modified', reason: 'hash mismatch' });
       }
     }
   }
+
+  if (baselineDirty) {
+    try {
+      const bfile = path.join(root, 'contextbase', 'baseline.json');
+      fs.mkdirSync(path.dirname(bfile), { recursive: true });
+      writeAtomic(bfile, JSON.stringify(b, null, 2));
+    } catch (err) {
+      // No se puede persistir la migracion: se reporta pero el chequeo sigue siendo valido.
+      emitCbError(err);
+    }
+  }
+
   return { status: drifts.length ? 'drift' : 'ok', drifts };
 }
 

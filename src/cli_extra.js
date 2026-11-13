@@ -28,6 +28,36 @@ const c = {
   blue: '\x1b[34m', gray: '\x1b[90m'
 };
 
+// Uso incorrecto impreso: el comando no se ejecuto.
+function failUsage(op, detail, cwd) {
+  console.error(c.red + '[ContextBase Error] CB_USAGE | ' + op + ' | ' + path.resolve(cwd || process.cwd()) + ' | ' + detail + c.reset);
+  process.exitCode = 2;
+}
+
+// Uso incorrecto lanzado: lo usa `web start` para no ejecutar nada y salir con 2
+// (bin/contextbase.js respeta err.exitCode).
+function usageError(op, detail, cwd) {
+  const err = new Error('[ContextBase Error] CB_USAGE | ' + op + ' | ' + path.resolve(cwd || process.cwd()) + ' | ' + detail);
+  err.code = 'CB_USAGE';
+  err.exitCode = 2;
+  return err;
+}
+
+function failToolUnknown(op, name, ids, cwd) {
+  console.error(c.red + '[ContextBase Error] CB_TOOL_UNKNOWN | ' + op + ' | ' + path.resolve(cwd || process.cwd()) + ' | herramienta desconocida: ' + name + ' (usa: ' + ids.join(', ') + ')' + c.reset);
+  process.exitCode = 2;
+}
+
+// Error tipado de sandbox (CB_SANDBOX_APPLY / CB_PATH_ESCAPE): se ejecuto y fallo.
+function failSandbox(err, op, cwd) {
+  const code = err && typeof err.code === 'string' && err.code.startsWith('CB_') ? err.code : 'CB_SANDBOX_APPLY';
+  const line = err && typeof err.message === 'string' && err.message.startsWith('[ContextBase Error]')
+    ? err.message
+    : '[ContextBase Error] ' + code + ' | ' + op + ' | ' + path.resolve(cwd || process.cwd()) + ' | ' + (err && err.message ? err.message : String(err));
+  console.error(c.red + line + c.reset);
+  process.exitCode = 1;
+}
+
 export async function runExtra(command, args, cwd) {
   cwd = cwd || process.cwd();
   if (command === 'mission') {
@@ -78,8 +108,11 @@ export async function runExtra(command, args, cwd) {
     let rounds;
     if (roundsArg) {
       const valor = roundsArg.includes('=') ? roundsArg.split('=')[1] : args[args.indexOf(roundsArg) + 1];
-      const n = Number(valor);
-      if (Number.isFinite(n) && n > 0) rounds = Math.floor(n);
+      if (valor === undefined || String(valor).startsWith('--') || !/^\d+$/.test(String(valor)) || Number(valor) < 1) {
+        failUsage('verify', '--rounds requiere un entero > 0 (ej: --rounds=8)', cwd);
+        return true;
+      }
+      rounds = Number(valor);
     }
     const json = args.includes('--json');
     const res = await simulateArbitration(rounds ? { rounds } : {});
@@ -269,6 +302,11 @@ export async function runExtra(command, args, cwd) {
     if (sub === 'enable' || sub === 'disable') {
       const name = args[2];
       if (!name || name.startsWith('--')) { console.error(c.yellow + 'Uso: contextbase tools ' + sub + ' <nombre>' + c.reset); process.exitCode = 2; return true; }
+      const ids = getRegistry(cwd).map((t) => t.id);
+      if (!ids.includes(name)) {
+        failToolUnknown('tools ' + sub, name, ids, cwd);
+        return true;
+      }
       setEnabled(name, sub === 'enable', cwd);
       console.log(c.green + 'OK:' + c.reset + ' ' + name + ' ' + (sub === 'enable' ? 'habilitado' : 'deshabilitado'));
       return true;
@@ -444,7 +482,15 @@ export async function runSandboxCommand(args, cwd) {
     }
     const flags = parseFlags(args.slice(2));
     const files = typeof flags.files === 'string' ? flags.files.split(',').map((f) => f.trim()).filter(Boolean) : null;
-    const res = applySandbox(cwd, id, { files });
+    // Nuevo contrato de sandbox: applySandbox lanza error tipado (CB_SANDBOX_APPLY /
+    // CB_PATH_ESCAPE). Se reporta con el formato del proyecto y exit 1 (no es uso).
+    let res;
+    try {
+      res = applySandbox(cwd, id, { files });
+    } catch (err) {
+      failSandbox(err, 'sandbox apply', cwd);
+      return true;
+    }
     if (json) {
       console.log(JSON.stringify({ id, ...res }, null, 2));
     } else {
@@ -464,7 +510,14 @@ export async function runSandboxCommand(args, cwd) {
       process.exitCode = 2;
       return true;
     }
-    const res = removeSandbox(cwd, id);
+    // removeSandbox tambien lanza con el nuevo contrato de contencion.
+    let res;
+    try {
+      res = removeSandbox(cwd, id);
+    } catch (err) {
+      failSandbox(err, 'sandbox rm', cwd);
+      return true;
+    }
     if (json) console.log(JSON.stringify({ id, ...res }, null, 2));
     else console.log(res.removed ? c.green + 'Sandbox eliminado:' + c.reset + ' ' + id : c.yellow + 'Sandbox no encontrado:' + c.reset + ' ' + id);
     if (!res.removed) process.exitCode = 1;
@@ -660,8 +713,23 @@ export function runSwarmCommand(args, cwd) {
   }
 
   if (sub === 'start') {
-    const preyOrTask = flags.prey || flags.task || '';
+    const preyOrTask = String(flags.prey ?? flags.task ?? '').trim();
+    if (!preyOrTask) {
+      throw usageError('web start', 'falta la tarea o presa del enjambre: --prey "..." (o --task "...")', cwd);
+    }
     const spidersOrWorkers = flags.spiders ?? flags.workers;
+    if (spidersOrWorkers !== undefined) {
+      const rawSpiders = String(spidersOrWorkers);
+      if (!/^\d+$/.test(rawSpiders) || Number(rawSpiders) < 1 || Number(rawSpiders) > 12) {
+        throw usageError('web start', '--spiders debe ser un entero entre 1 y 12 (recibido: ' + rawSpiders + ')', cwd);
+      }
+    }
+    if (flags.ttl !== undefined) {
+      const rawTtl = String(flags.ttl);
+      if (!/^\d+$/.test(rawTtl) || Number(rawTtl) < 1) {
+        throw usageError('web start', '--ttl debe ser un entero > 0 en minutos (recibido: ' + rawTtl + ')', cwd);
+      }
+    }
     const out = startSwarm({
       cwd,
       base: flags.base,
@@ -689,13 +757,20 @@ export function runSwarmCommand(args, cwd) {
   }
 
   if (sub === 'arbitrate' || sub === 'judge') {
+    if (flags.retries !== undefined) {
+      const rawRetries = String(flags.retries);
+      if (!/^\d+$/.test(rawRetries)) {
+        failUsage('web arbitrate', '--retries debe ser un entero >= 0 (recibido: ' + rawRetries + ')', cwd);
+        return true;
+      }
+    }
     let out;
     try {
       out = arbitrateWeb({
         cwd,
         run: flags.run,
         autoFix: flags['no-fix'] ? false : true,
-        maxRetries: flags.retries ? Number(flags.retries) : 2,
+        maxRetries: flags.retries !== undefined ? Number(flags.retries) : 2,
       });
     } catch (err) {
       const msg = String((err && err.message) || err);

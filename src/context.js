@@ -38,17 +38,29 @@ function parseSecurity(text) {
   return out;
 }
 
+/**
+ * Version de cada archivo de reglas. Una lectura fallida (EPERM/EBUSY/EISDIR) NO puede
+ * tumbar el digest: se reporta como ilegible y el resto del estado sigue vivo.
+ */
 function ruleVersions(projectDir) {
   const present = [];
-  const outdated = [];
+  const versions = [];
+  const unreadable = [];
   for (const rel of RULE_FILES) {
     const full = path.join(projectDir, rel);
     if (!fs.existsSync(full)) continue;
     present.push(rel);
-    const m = fs.readFileSync(full, 'utf8').match(/<!-- CONTEXTBASE:v([0-9.]+) -->/);
-    outdated.push({ file: rel, version: m ? m[1] : 'sin marca' });
+    let text;
+    try {
+      text = fs.readFileSync(full, 'utf8');
+    } catch (err) {
+      unreadable.push({ file: rel, code: (err && err.code) || 'read-error' });
+      continue;
+    }
+    const m = text.match(/<!-- CONTEXTBASE:v([0-9.]+) -->/);
+    versions.push({ file: rel, version: m ? m[1] : 'sin marca' });
   }
-  return { present, versions: outdated };
+  return { present, versions, unreadable };
 }
 
 const EGM_VERDICT_FILE = path.join('contextbase', 'egm', 'verdict.json');
@@ -136,6 +148,10 @@ export function evaluateHealth(state, ownVersion) {
   else if (state.files['componentes.md'].days > 7) problems.push('componentes.md desactualizado (' + state.files['componentes.md'].days + ' dias; ejecutar contextbase audit).');
   if (state.security.critical > 0) problems.push('Vulnerabilidades critical: ' + state.security.critical + ' (corregir antes de continuar).');
   if (state.security.high > 0) problems.push('Vulnerabilidades high: ' + state.security.high + ' (corregir antes de continuar).');
+  const unreadable = (state.rules && state.rules.unreadable) || [];
+  for (const item of unreadable) {
+    problems.push(`[ContextBase Error] CB_CONTEXT_READ | context.rules | ${item.file} | no se pudo leer (${item.code}): el digest continua sin su version de reglas.`);
+  }
   const drift = state.rules.versions.filter(r => r.version !== ownVersion);
   if (drift.length > 0) problems.push('Reglas de agente desactualizadas en: ' + drift.map(d => d.file).join(', ') + ' (ejecutar contextbase sync).');
   if (state.guard && state.guard.status !== 'ok') problems.push('Deriva en archivos base: ' + (state.guard.drifts || []).map(d => d.file).join(', ') + ' (ejecutar contextbase guard).');

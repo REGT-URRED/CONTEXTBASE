@@ -5,14 +5,75 @@ import { writeAtomic } from './fsutil.js';
 
 const MAX_DEPS_INVENTORY = 40;
 
+/**
+ * Presupuesto de red. `runMaintenance` corre dentro del event loop del MCP: un solo
+ * comando colgado (npm outdated 45 s + pip 60 s + audit 60 s = 165 s) congela el
+ * handshake y el host mata el proceso. 15 s por comando, corte total al primer
+ * timeout y nada de red en contexto de test.
+ */
+const NET_TIMEOUT_MS = 15000;
+const NET_BLOCK_TTL_MS = 10 * 60 * 1000;
+
+const netState = { blockedUntil: 0, reason: null, timeouts: 0 };
+
+function networkAllowed() {
+  if (process.env.NODE_TEST_CONTEXT) return false;
+  return Date.now() >= netState.blockedUntil;
+}
+
+function networkReason() {
+  if (process.env.NODE_TEST_CONTEXT) return 'NODE_TEST_CONTEXT';
+  return netState.reason;
+}
+
+function blockNetwork(reason) {
+  netState.reason = reason;
+  netState.blockedUntil = Date.now() + NET_BLOCK_TTL_MS;
+}
+
 function run(cmd, cwd, timeout = 30000) {
+  const result = runDetailed(cmd, cwd, timeout);
+  return result.stdout;
+}
+
+/**
+ * Igual que `run` pero distingue un timeout de un "no esta instalado": ambos devuelven
+ * stdout null y el presupuesto necesita saber cual fue para cortar el escaneo.
+ */
+function runDetailed(cmd, cwd, timeout) {
   try {
-    return execSync(cmd, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout });
+    const stdout = execSync(cmd, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout });
+    return { stdout, timedOut: false };
   } catch (e) {
     // npm outdated / pip audit terminan con código != 0 en resultados positivos: devolver stdout si existe
-    if (e && typeof e.stdout === 'string' && e.stdout.trim().length > 0) return e.stdout;
-    return null;
+    const stdout = e && typeof e.stdout === 'string' && e.stdout.trim().length > 0 ? e.stdout : null;
+    const killed = Boolean(e && (e.killed || e.signal || e.code === 'ETIMEDOUT'));
+    return { stdout, timedOut: !stdout && killed };
   }
+}
+
+/** Ejecuta un comando de red respetando el presupuesto. `skipped` = no se intento. */
+function runNetwork(cmd, cwd) {
+  if (!networkAllowed()) return { stdout: null, timedOut: false, skipped: true };
+  const result = runDetailed(cmd, cwd, NET_TIMEOUT_MS);
+  if (result.timedOut) {
+    netState.timeouts += 1;
+    blockNetwork(`timeout de red en "${cmd.split(' ')[0]}" (${NET_TIMEOUT_MS} ms)`);
+  }
+  return { ...result, skipped: false };
+}
+
+function networkBudget() {
+  return {
+    enabled: networkAllowed(),
+    reason: networkReason(),
+    timeouts: netState.timeouts
+  };
+}
+
+/** Linea unica que reemplaza el escaneo cuando el presupuesto esta cerrado. */
+function networkSkipLine(eco, what, reason) {
+  return { eco, detail: `Escaneo de red omitido (${reason || 'presupuesto agotado'}): ${what}. Ejecutar manualmente.` };
 }
 
 function fileMtime(p) {
@@ -125,9 +186,21 @@ function collectInventory(projectDir) {
  */
 function freshnessScan(projectDir) {
   const results = [];
-  if (fs.existsSync(path.join(projectDir, 'package.json'))) {
-    const out = run('npm outdated --json --silent', projectDir, 45000);
-    if (out) {
+  const npmProject = fs.existsSync(path.join(projectDir, 'package.json'));
+  const pyProject = fs.existsSync(path.join(projectDir, 'requirements.txt')) || fs.existsSync(path.join(projectDir, 'pyproject.toml'));
+  if (!npmProject && !pyProject) return results;
+  if (!networkAllowed()) {
+    const reason = networkReason() || 'presupuesto de red agotado';
+    if (npmProject) results.push(networkSkipLine('Node.js / npm', '`npm outdated`', reason));
+    if (pyProject) results.push(networkSkipLine('Python / pip', '`pip list --outdated`', reason));
+    return results;
+  }
+  if (npmProject) {
+    const npmOutdated = runNetwork('npm outdated --json --silent', projectDir);
+    const out = npmOutdated.stdout;
+    if (npmOutdated.skipped) {
+      results.push(networkSkipLine('Node.js / npm', '`npm outdated`', networkReason()));
+    } else if (out) {
       try {
         const data = JSON.parse(out);
         const outdated = Object.entries(data).map(([name, d]) => `- \`npm\` **${name}**: ${d.current ? `instalado ${d.current}` : 'no instalado'} → disponible ${d.latest || d.wanted || '?'}`).join('\n');
@@ -137,9 +210,12 @@ function freshnessScan(projectDir) {
       results.push({ eco: 'Node.js / npm', detail: 'No se pudo ejecutar `npm outdated` (sin red o sin npm). Verificar manualmente.' });
     }
   }
-  if (fs.existsSync(path.join(projectDir, 'requirements.txt')) || fs.existsSync(path.join(projectDir, 'pyproject.toml'))) {
-    const out = run('pip list --outdated --format json', projectDir, 60000);
-    if (out) {
+  if (pyProject) {
+    const pipOutdated = runNetwork('pip list --outdated --format json', projectDir);
+    const out = pipOutdated.stdout;
+    if (pipOutdated.skipped) {
+      results.push(networkSkipLine('Python / pip', '`pip list --outdated`', networkReason()));
+    } else if (out) {
       try {
         const data = JSON.parse(out);
         const outdated = data.slice(0, 25).map(d => `- \`pip\` **${d.name}**: instalado ${d.version} → disponible ${d.latest_version}`).join('\n');
@@ -157,9 +233,27 @@ function freshnessScan(projectDir) {
  */
 function securityScan(projectDir) {
   const results = [];
-  if (fs.existsSync(path.join(projectDir, 'package.json'))) {
-    const out = run('npm audit --json --silent', projectDir, 60000);
-    if (out) {
+  const npmProject = fs.existsSync(path.join(projectDir, 'package.json'));
+  const pyProject = fs.existsSync(path.join(projectDir, 'requirements.txt')) || fs.existsSync(path.join(projectDir, 'pyproject.toml'));
+  const cargoProject = fs.existsSync(path.join(projectDir, 'Cargo.toml'));
+  const goProject = fs.existsSync(path.join(projectDir, 'go.mod'));
+  if (!npmProject && !pyProject && !cargoProject && !goProject) return results;
+
+  if (!networkAllowed()) {
+    const reason = networkReason() || 'presupuesto de red agotado';
+    if (npmProject) results.push(networkSkipLine('Node.js / npm', '`npm audit`', reason));
+    if (pyProject) results.push(networkSkipLine('Python / pip-audit', '`pip-audit`', reason));
+    if (cargoProject) results.push(networkSkipLine('Rust / cargo audit', '`cargo audit`', reason));
+    if (goProject) results.push(networkSkipLine('Go / govulncheck', '`govulncheck`', reason));
+    return results;
+  }
+
+  if (npmProject) {
+    const audit = runNetwork('npm audit --json --silent', projectDir);
+    const out = audit.stdout;
+    if (audit.skipped) {
+      results.push(networkSkipLine('Node.js / npm', '`npm audit`', networkReason()));
+    } else if (out) {
       try {
         const data = JSON.parse(out);
         const counts = countSeverities(data.vulnerabilities);
@@ -173,39 +267,64 @@ function securityScan(projectDir) {
   for (const checker of [
     { eco: 'Python / pip-audit', probe: 'pip-audit --version', cmd: 'pip-audit --format json --quiet' }
   ]) {
-    if (run(checker.probe, projectDir, 10000)) {
-      const out = run(checker.cmd, projectDir, 120000);
+    if (!pyProject) continue;
+    const probe = runNetwork(checker.probe, projectDir);
+    if (probe.skipped) {
+      results.push(networkSkipLine(checker.eco, `\`${checker.probe}\``, networkReason()));
+      continue;
+    }
+    if (probe.stdout) {
+      const runAudit = runNetwork(checker.cmd, projectDir);
+      const out = runAudit.stdout;
       if (out) {
         try {
           const data = JSON.parse(out);
           const vulns = Array.isArray(data) ? data : (data.dependencies || []).filter(d => d.vulns?.length > 0);
           results.push({ eco: checker.eco, total: vulns.length, counts: {}, detail: vulns.length > 0 ? vulns.map(v => `- ${v.name || v.component?.name || 'componente'}: vulnerabilidades reportadas`).join('\n') : 'Sin vulnerabilidades conocidas reportadas.' });
         } catch { results.push({ eco: checker.eco, detail: 'Salida no interpretable; revisar manualmente.' }); }
-      } else {
+      } else if (!runAudit.skipped) {
         results.push({ eco: checker.eco, total: 0, counts: {}, detail: 'Sin vulnerabilidades conocidas reportadas.' });
+      } else {
+        results.push(networkSkipLine(checker.eco, '`pip-audit`', networkReason()));
       }
     }
   }
-  if (fs.existsSync(path.join(projectDir, 'Cargo.toml')) && run('cargo audit --version', projectDir, 10000)) {
-    const out = run('cargo audit --json', projectDir, 120000);
-    if (out) {
-      try {
-        const data = JSON.parse(out);
-        const list = data.vulnerabilities?.list || [];
-        const counts = {};
-        for (const v of list) {
-          const sev = String(v.advisory?.severity || 'unknown').toLowerCase();
-          counts[sev] = (counts[sev] || 0) + 1;
-        }
-        results.push({ eco: 'Rust / cargo audit', total: list.length, counts, detail: list.length > 0 ? list.map(v => '- ' + (v.advisory?.id || 'advisory') + ': ' + (v.package?.name || '?')).join('\n') : 'Sin vulnerabilidades conocidas reportadas.' });
-      } catch { results.push({ eco: 'Rust / cargo audit', detail: 'Salida no interpretable; revisar con cargo audit.' }); }
+  if (cargoProject) {
+    const probe = runNetwork('cargo audit --version', projectDir);
+    if (probe.skipped) {
+      results.push(networkSkipLine('Rust / cargo audit', '`cargo audit`', networkReason()));
+    } else if (probe.stdout) {
+      const runAudit = runNetwork('cargo audit --json', projectDir);
+      const out = runAudit.stdout;
+      if (out) {
+        try {
+          const data = JSON.parse(out);
+          const list = data.vulnerabilities?.list || [];
+          const counts = {};
+          for (const v of list) {
+            const sev = String(v.advisory?.severity || 'unknown').toLowerCase();
+            counts[sev] = (counts[sev] || 0) + 1;
+          }
+          results.push({ eco: 'Rust / cargo audit', total: list.length, counts, detail: list.length > 0 ? list.map(v => '- ' + (v.advisory?.id || 'advisory') + ': ' + (v.package?.name || '?')).join('\n') : 'Sin vulnerabilidades conocidas reportadas.' });
+        } catch { results.push({ eco: 'Rust / cargo audit', detail: 'Salida no interpretable; revisar con cargo audit.' }); }
+      } else if (runAudit.skipped) {
+        results.push(networkSkipLine('Rust / cargo audit', '`cargo audit`', networkReason()));
+      }
     }
   }
-  if (fs.existsSync(path.join(projectDir, 'go.mod')) && run('govulncheck -version', projectDir, 10000)) {
-    const out = run('govulncheck ./...', projectDir, 180000);
-    if (out) {
-      const hits = (out.match(/Vulnerability #\d+/g) || []).length;
-      results.push({ eco: 'Go / govulncheck', total: hits, counts: {}, detail: hits > 0 ? hits + ' vulnerabilidades reportadas (revisar salida de govulncheck).' : 'Sin vulnerabilidades conocidas reportadas.' });
+  if (goProject) {
+    const probe = runNetwork('govulncheck -version', projectDir);
+    if (probe.skipped) {
+      results.push(networkSkipLine('Go / govulncheck', '`govulncheck`', networkReason()));
+    } else if (probe.stdout) {
+      const runAudit = runNetwork('govulncheck ./...', projectDir);
+      const out = runAudit.stdout;
+      if (out) {
+        const hits = (out.match(/Vulnerability #\d+/g) || []).length;
+        results.push({ eco: 'Go / govulncheck', total: hits, counts: {}, detail: hits > 0 ? hits + ' vulnerabilidades reportadas (revisar salida de govulncheck).' : 'Sin vulnerabilidades conocidas reportadas.' });
+      } else if (runAudit.skipped) {
+        results.push(networkSkipLine('Go / govulncheck', '`govulncheck`', networkReason()));
+      }
     }
   }
   return results;
@@ -272,6 +391,9 @@ ${secSection}
 
 /**
  * Mantenimiento completo: inventario + frescura + seguridad -> contextbase/componentes.md
+ *
+ * `network` informa que hizo el presupuesto: el watcher y el MCP llaman a esta funcion
+ * en cada latido y necesitan saber si hubo red, si se corto por timeout o por test.
  */
 export function runMaintenance(projectDir) {
   const inventory = collectInventory(projectDir);
@@ -281,5 +403,5 @@ export function runMaintenance(projectDir) {
   fs.mkdirSync(contextDir, { recursive: true });
   const file = path.join(contextDir, 'componentes.md');
   writeAtomic(file, generateComponentes(inventory, freshness, security));
-  return { file, inventory, freshness, security };
+  return { file, inventory, freshness, security, network: networkBudget() };
 }

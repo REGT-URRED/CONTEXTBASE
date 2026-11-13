@@ -11,6 +11,29 @@ const pkg = (() => { try { return JSON.parse(fs.readFileSync(new URL('../package
 const PROTOCOL = '2024-11-05';
 const SERVER = { name: 'contextbase', version: pkg.version || '0.0.0' };
 
+// Enums validos en el borde MCP: nunca un exito silencioso por accion invalida.
+const TASK_ACTIONS = new Set(['add', 'done', 'list']);
+const EXPORT_TYPES = new Set(['estado', 'digest']);
+const EXPORT_FORMATS = new Set(['json', 'html']);
+const LIFECYCLE_EVENTS = new Set([
+  'session-start', 'digest', 'web-pulse', 'task-add', 'task-done',
+  'post-tool', 'session-stop', 'stop', 'post-commit', 'post-merge', 'post-checkout'
+]);
+
+function mcpParamError(op, detail) {
+  const err = new Error(`[ContextBase Error] CB_MCP_PARAMS | ${op} | ${process.cwd()} | ${detail}`);
+  err.rpcCode = -32602;
+  return err;
+}
+
+function mcpActionError(op, detail) {
+  return new Error(`[ContextBase Error] CB_MCP_ACTION | ${op} | ${process.cwd()} | ${detail}`);
+}
+
+function describeToolNames() {
+  return TOOLS.map(t => t.name).join(', ');
+}
+
 const MUTATING_TOOLS = new Set([
   'contextbase_log',
   'contextbase_task',
@@ -172,7 +195,19 @@ async function callTool(name, args = {}, projectDir) {
     if (!args.message) throw new Error('Falta message');
     return await capture(() => cli.runLog(args.message, projectDir));
   }
-  if (name === 'contextbase_task') return await capture(() => cli.runTask(args.action || 'list', args.text || '', projectDir));
+  if (name === 'contextbase_task') {
+    const action = String((args && args.action) || 'list');
+    if (!TASK_ACTIONS.has(action)) {
+      throw mcpActionError('contextbase_task', `action invalida: ${action} (usa: add|done|list)`);
+    }
+    let result = null;
+    const out = await capture(() => { result = cli.runTask(action, (args && args.text) || '', projectDir); });
+    if (result && result.ok === false) {
+      const code = result.exitCode === 2 ? 'CB_MCP_ACTION' : 'CB_MCP_PARAMS';
+      throw new Error(`[ContextBase Error] ${code} | contextbase_task ${action} | ${projectDir} | ${result.message}`);
+    }
+    return out;
+  }
   if (name === 'contextbase_audit') {
     const r = mant.runMaintenance(projectDir);
     const deps = r.inventory.reduce((a, i) => a + i.deps.length, 0);
@@ -239,8 +274,14 @@ async function callTool(name, args = {}, projectDir) {
   }
   if (name === 'contextbase_export') {
     const exp = await import('./export.js');
-    const type = (args && args.type) || 'estado';
-    const format = (args && args.format) || 'json';
+    const type = String((args && args.type) || 'estado');
+    const format = String((args && args.format) || 'json');
+    if (!EXPORT_TYPES.has(type)) {
+      throw mcpActionError('contextbase_export', `type invalido: ${type} (usa: estado|digest)`);
+    }
+    if (!EXPORT_FORMATS.has(format)) {
+      throw mcpActionError('contextbase_export', `format invalido: ${format} (usa: json|html)`);
+    }
     const output = args && args.output;
     const result = exp.exportCommand(projectDir, { type: type === 'digest' ? 'digest' : 'state', format, output });
     return JSON.stringify(result, null, 2);
@@ -271,10 +312,13 @@ async function callTool(name, args = {}, projectDir) {
   }
   if (name === 'contextbase_hook') {
     const hooks = await import('./hooks.js');
-    const act = (args && args.action) || 'install';
+    const act = String((args && args.action) || 'install');
     if (act === 'install' || act === 'remove' || act === 'uninstall') {
       const r = hooks.installGitHook(projectDir, act);
       return JSON.stringify(r, null, 2);
+    }
+    if (!LIFECYCLE_EVENTS.has(act.toLowerCase())) {
+      throw mcpActionError('contextbase_hook', `action invalida: ${act} (usa: install|remove|${[...LIFECYCLE_EVENTS].join('|')})`);
     }
     const out = await hooks.runLifecycleHook(act, projectDir, Array.isArray(args.files) ? args.files : []);
     return String(out);
@@ -290,9 +334,18 @@ async function callTool(name, args = {}, projectDir) {
     if (action === 'compile-intent') return JSON.stringify(ctrl.compileHumanIntent(projectDir, args.intent || ''), null, 2);
     if (action === 'autopilot') return JSON.stringify(ctrl.runAutopilotCycle(projectDir), null, 2);
     if (action === 'list') return JSON.stringify(reg.getRegistry(projectDir).map(t => ({ id: t.id, name: t.name, enabled: t.enabled, cliSupport: t.cliSupport })));
-    if (action === 'enable' && args && args.name) { reg.setEnabled(args.name, true, projectDir); return 'ok'; }
-    if (action === 'disable' && args && args.name) { reg.setEnabled(args.name, false, projectDir); return 'ok'; }
-    throw new Error('Accion invalida');
+    if (action === 'enable' || action === 'disable') {
+      if (!args || !args.name) {
+        throw mcpParamError('contextbase_tools', `action ${action} requiere name`);
+      }
+      const ids = reg.getRegistry(projectDir).map(t => t.id);
+      if (!ids.includes(args.name)) {
+        throw new Error(`[ContextBase Error] CB_TOOL_UNKNOWN | contextbase_tools ${action} | ${projectDir} | herramienta desconocida: ${args.name} (usa: ${ids.join(', ')})`);
+      }
+      reg.setEnabled(args.name, action === 'enable', projectDir);
+      return 'ok';
+    }
+    throw mcpActionError('contextbase_tools', `accion invalida: ${action}`);
   }
   if (name === 'contextbase_mission') {
     const mission = await import('./mission.js');
@@ -300,8 +353,21 @@ async function callTool(name, args = {}, projectDir) {
   }
   if (name === 'contextbase_swarm_start' || name === 'contextbase_web_start') {
     const sw = await import('./swarm.js');
-    const task = args.prey || args.task;
-    if (!task) throw new Error('Falta task o prey');
+    const task = String((args && (args.prey || args.task)) || '').trim();
+    if (!task) throw mcpParamError('contextbase_swarm_start', 'falta prey o task (presa del enjambre)');
+    const rawSpiders = args.spiders ?? args.workers;
+    if (rawSpiders !== undefined) {
+      const n = Number(rawSpiders);
+      if (!Number.isInteger(n) || n < 1 || n > 12) {
+        throw mcpParamError('contextbase_swarm_start', `spiders debe ser un entero entre 1 y 12 (recibido: ${rawSpiders})`);
+      }
+    }
+    if (args.ttl !== undefined) {
+      const ttl = Number(args.ttl);
+      if (!Number.isInteger(ttl) || ttl < 1) {
+        throw mcpParamError('contextbase_swarm_start', `ttl debe ser un entero > 0 en minutos (recibido: ${args.ttl})`);
+      }
+    }
     const workers = args.spiders ?? args.workers;
     const out = sw.startSwarm({
       cwd: projectDir,
@@ -381,7 +447,30 @@ async function callTool(name, args = {}, projectDir) {
   throw new Error('Tool desconocida: ' + name);
 }
 
-function reply(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
+// Escritura cruda del protocolo: todo lo demas que intente escribir en stdout
+// se desvia a stderr para que ningun log de background corrompa el stream JSON-RPC.
+let rawStdoutWrite = null;
+
+function reply(obj) {
+  const line = JSON.stringify(obj) + '\n';
+  if (rawStdoutWrite) rawStdoutWrite(line);
+  else process.stdout.write(line);
+}
+
+function installStdoutGuard() {
+  if (rawStdoutWrite) return;
+  rawStdoutWrite = process.stdout.write.bind(process.stdout);
+  const stderrWrite = process.stderr.write.bind(process.stderr);
+  process.stdout.write = (chunk, encoding, callback) => {
+    const done = typeof encoding === 'function' ? encoding : callback;
+    try {
+      const text = typeof chunk === 'string' || Buffer.isBuffer(chunk) ? chunk : String(chunk);
+      stderrWrite(text);
+    } catch {}
+    if (typeof done === 'function') { try { done(); } catch {} }
+    return true;
+  };
+}
 
 /**
  * Captura lo que una tool imprima en stdout para que no contamine el stream JSON-RPC.
@@ -414,11 +503,36 @@ export async function startMcpServer(projectDir = process.cwd()) {
   // Dos interfaces readline sobre el mismo stdin duplicarian las respuestas.
   if (serverActivo) return;
   serverActivo = true;
+  // Toda la vida del proceso: reply() escribe por el descriptor original y cualquier
+  // otro log (timers del watcher incluidos) se desvia a stderr.
+  installStdoutGuard();
   try { autoEnsure(projectDir); } catch {}
   let watcher = null;
   if (!process.env.NODE_TEST_CONTEXT) {
     try { watcher = startWatcher(projectDir, { unref: true }); } catch {}
   }
+
+  let shuttingDown = false;
+  function shutdown(code = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try { if (watcher) watcher.close(); } catch {}
+    process.exit(code);
+  }
+
+  // El host puede cerrar el pipe: sin este listener, EPIPE es uncaughtException (exit 1).
+  const onStdoutError = (err) => {
+    if (err && err.code === 'EPIPE') shutdown(0);
+    else {
+      try {
+        process.stderr.write(`[ContextBase Error] CB_MCP_LIFECYCLE | stdout | ${projectDir} | ${err && err.message ? err.message : 'error de escritura'}\n`);
+      } catch {}
+    }
+  };
+  process.stdout.on('error', onStdoutError);
+  const onSignal = () => shutdown(0);
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
 
   async function processLine(line) {
     const text = line.trim();
@@ -482,7 +596,29 @@ export async function startMcpServer(projectDir = process.cwd()) {
       }
       if (method === 'tools/call') {
         const name = params?.name;
-        const args = params?.arguments || {};
+        const rawArgs = params?.arguments;
+        // params.arguments debe ser objeto JSON (null, array o primitivo rompen las tools).
+        if (rawArgs !== undefined && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))) {
+          return reply({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `[ContextBase Error] CB_MCP_PARAMS | tools/call | ${projectDir} | params.arguments debe ser un objeto JSON (recibido: ${Array.isArray(rawArgs) ? 'array' : typeof rawArgs})`
+            }
+          });
+        }
+        if (typeof name !== 'string' || !TOOLS.some(t => t.name === name)) {
+          return reply({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `[ContextBase Error] CB_MCP_PARAMS | tools/call | ${projectDir} | tool desconocida: ${String(name)}`
+            }
+          });
+        }
+        const args = rawArgs || {};
         // Una tool puede fijar process.exitCode (uso invalido); el servidor no debe
         // terminar con ese codigo porque el host lo interpreta como crash.
         const prevExitCode = process.exitCode;
@@ -493,7 +629,10 @@ export async function startMcpServer(projectDir = process.cwd()) {
           const text = captured && typeof out === 'string' ? captured + out : String(out);
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
         } catch (e) {
-          return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true } });
+          const message = typeof e.message === 'string' && e.message.startsWith('[ContextBase Error]')
+            ? e.message
+            : `[ContextBase Error] CB_MCP_PARAMS | ${name} | ${projectDir} | ${e.message}`;
+          return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + message }], isError: true } });
         } finally {
           process.exitCode = prevExitCode;
         }
@@ -505,15 +644,38 @@ export async function startMcpServer(projectDir = process.cwd()) {
   }
 
   let queue = Promise.resolve();
+  let closed = false;
+  let inFlight = 0;
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   rl.on('line', line => {
-    queue = queue.then(() => processLine(line)).catch(() => {});
+    // Tras el cierre de stdin no se acepta trabajo nuevo.
+    if (closed) return;
+    inFlight += 1;
+    queue = queue.then(() => processLine(line)).catch(() => {}).finally(() => { inFlight -= 1; });
   });
-  await new Promise(resolve => rl.on('close', () => {
-    serverActivo = false;
-    queue.finally(() => {
+  await new Promise(resolve => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      serverActivo = false;
+      process.removeListener('SIGTERM', onSignal);
+      process.removeListener('SIGINT', onSignal);
+      process.stdout.removeListener('error', onStdoutError);
       if (watcher) { try { watcher.close(); } catch {} }
       resolve();
+    };
+    // Tope de cierre: libera handles y resuelve. Si hay una tool en vuelo NO se corta
+    // (prioridad: no truncar respuestas legitimas como contextbase_audit); el proceso
+    // drena solo cuando esa respuesta termina.
+    timer = setTimeout(() => { if (inFlight === 0) finish(); }, 250);
+    timer.unref();
+    rl.on('close', () => {
+      closed = true;
+      serverActivo = false;
+      queue.finally(finish);
     });
-  }));
+  });
 }

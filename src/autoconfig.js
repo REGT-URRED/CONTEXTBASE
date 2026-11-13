@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeAtomic } from './fsutil.js';
 import { CONTEXTBASE_RULE_BLOCK } from './rules.js';
@@ -12,6 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BACKUP_SUFFIX = '.bak-contextbase';
+/** Cuantos respaldos con marca temporal se conservan por archivo (el legado no cuenta). */
+const BACKUP_RETENTION = 5;
 
 let traceCounter = 0;
 
@@ -35,18 +38,137 @@ export function reportConfigError(code, op, msg, extra = {}) {
 }
 
 /**
+ * Emite un error de hardening con el formato compacto del proyecto:
+ * `[ContextBase Error] <CODE> | <op> | <path> | <detalle accionable>`
+ * No lanza ni aborta: el llamador decide como continuar.
+ */
+function reportAutoconfigError(code, op, filePath, detail) {
+  const target = filePath ? String(filePath) : '-';
+  const msg = String(detail == null ? '' : detail).replace(/\s+/g, ' ').trim() || 'sin detalle';
+  console.error(`[ContextBase Error] ${code} | ${op} | ${target} | ${msg}`);
+  return { code, op, message: msg, trace_id: nextTraceId(), file: filePath || null };
+}
+
+/** Marca temporal ordenable YYYYMMDD-HHmmss para nombres de respaldo. */
+function backupTimestamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+    + `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+/**
+ * Siguiente nombre de respaldo libre: `<archivo>.bak-contextbase-YYYYMMDD-HHmmss`
+ * y, si ya se uso ese nombre dentro del mismo segundo, `.N` con N incremental.
+ *
+ * El indice se calcula sobre lo que hay en disco, asi que tras una rotacion NUNCA
+ * se reutiliza un indice menor: los nombres siguen siendo cronologicamente ordenables.
+ */
+function nextBackupName(file) {
+  const base = `${file}${BACKUP_SUFFIX}-${backupTimestamp()}`;
+  const baseName = path.basename(base);
+  const prefix = `${baseName}.`;
+  let maxIndex = -1;
+  try {
+    for (const name of fs.readdirSync(path.dirname(file))) {
+      if (name === baseName) {
+        if (maxIndex < 0) maxIndex = 0;
+        continue;
+      }
+      if (!name.startsWith(prefix)) continue;
+      const n = Number.parseInt(name.slice(prefix.length), 10);
+      if (Number.isInteger(n) && n > maxIndex) maxIndex = n;
+    }
+  } catch {
+    // Sin lectura del directorio: se usa el nombre base y COPYFILE_EXCL evita pisar.
+  }
+  return maxIndex < 0 ? base : `${base}.${maxIndex + 1}`;
+}
+
+/** Orden cronologico de respaldos: marca temporal y, dentro del mismo segundo, indice numerico. */
+function compareBackups(a, b) {
+  const parse = (name) => {
+    const m = /-(\d{8}-\d{6})(?:\.(\d+))?$/.exec(name);
+    return m ? { stamp: m[1], index: m[2] ? Number(m[2]) : 0 } : { stamp: name, index: 0 };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.stamp !== pb.stamp) return pa.stamp < pb.stamp ? -1 : 1;
+  return pa.index - pb.index;
+}
+
+/**
+ * Conserva solo los ultimos BACKUP_RETENTION respaldos con marca temporal de `file`.
+ * Solo toca nombres que empiezan con el prefijo de ese archivo, asi que el respaldo
+ * legado `.bak-contextbase` y los respaldos de otros archivos quedan intactos.
+ */
+function rotateBackups(file) {
+  const dir = path.dirname(file);
+  const prefix = `${path.basename(file)}${BACKUP_SUFFIX}-`;
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((name) => name.startsWith(prefix));
+  } catch (err) {
+    reportAutoconfigError('CB_BACKUP_ROTATE', 'backupConfig.rotate', dir,
+      `No se pudo listar respaldos (${err.code || err.message}); revisa permisos del directorio.`);
+    return 0;
+  }
+  if (names.length <= BACKUP_RETENTION) return 0;
+  // Orden cronologico real: marca temporal y, dentro del mismo segundo, indice numerico.
+  names.sort(compareBackups);
+  const stale = names.slice(0, names.length - BACKUP_RETENTION);
+  let removed = 0;
+  for (const name of stale) {
+    const target = path.join(dir, name);
+    try {
+      fs.unlinkSync(target);
+      removed += 1;
+    } catch (err) {
+      reportAutoconfigError('CB_BACKUP_ROTATE', 'backupConfig.rotate', target,
+        `No se pudo borrar el respaldo viejo (${err.code || err.message}); borralo a mano si necesitas espacio.`);
+    }
+  }
+  return removed;
+}
+
+/**
  * Copia de seguridad del archivo antes de escribir sobre el.
- * Se usa el sufijo .bak-contextbase (precedente ya existente en el ecosistema).
+ *
+ * El respaldo usa nombre unico y ordenable (`<archivo>.bak-contextbase-YYYYMMDD-HHmmss`),
+ * asi que una segunda migracion NUNCA pisa el respaldo de la configuracion original.
+ * Se conservan los ultimos BACKUP_RETENTION respaldos de ese archivo.
+ *
+ * Compatibilidad: si todavia no existe el respaldo legado `.bak-contextbase` se crea
+ * una sola vez (copia del estado actual); si ya existe no se borra ni se sobrescribe.
+ *
+ * @returns {string|null|object} ruta del respaldo nuevo, null si el archivo no existe,
+ *                               o el error reportado si la copia fallo.
  */
 export function backupConfig(file) {
   if (!fs.existsSync(file)) return null;
-  const backup = file + BACKUP_SUFFIX;
-  try {
-    fs.copyFileSync(file, backup);
-    return backup;
-  } catch (err) {
-    return reportConfigError('CONFIG_BACKUP_FAILED', 'backupConfig', err.message, { file });
+  let backup = null;
+  for (let attempt = 0; attempt < 5 && !backup; attempt += 1) {
+    const candidate = nextBackupName(file);
+    try {
+      // COPYFILE_EXCL: nunca sobrescribir un respaldo existente (falla con EEXIST en vez de pisar).
+      fs.copyFileSync(file, candidate, fs.constants.COPYFILE_EXCL);
+      backup = candidate;
+    } catch (err) {
+      if (err && err.code === 'EEXIST') continue; // carrera con otro proceso: se recalcula el nombre
+      return reportConfigError('CONFIG_BACKUP_FAILED', 'backupConfig', err.message, { file });
+    }
   }
+  if (!backup) {
+    return reportConfigError('CONFIG_BACKUP_FAILED', 'backupConfig',
+      'no se pudo reservar un nombre de respaldo unico; revisa respaldos concurrentes en el directorio', { file });
+  }
+  const legacy = file + BACKUP_SUFFIX;
+  try {
+    if (!fs.existsSync(legacy)) fs.copyFileSync(file, legacy, fs.constants.COPYFILE_EXCL);
+  } catch {
+    // El respaldo con marca temporal ya existe; el legado es solo compatibilidad.
+  }
+  rotateBackups(file);
+  return backup;
 }
 
 export function getBinPath() {
@@ -598,11 +720,57 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
 }
 
 /**
- * Registra rutas autogeneradas en .git/info/exclude sin ensuciar .gitignore del repositorio.
+ * Resuelve el directorio git real de un proyecto.
+ *
+ * En un repositorio normal `<dir>/.git` es un DIRECTORIO. Dentro de un worktree de
+ * git `<dir>/.git` es un ARCHIVO con la linea `gitdir: <ruta>`: escribir el exclude
+ * en `<dir>/.git/info/exclude` falla con ENOTDIR (y el catch lo escondia).
+ *
+ * @returns {string|null} ruta del gitdir, o null si no hay `.git`
+ * @throws si el `.git` es un archivo ilegible o sin linea `gitdir:`
+ */
+function resolveGitDir(projectDir) {
+  const dotGit = path.join(projectDir, '.git');
+  const stat = fs.statSync(dotGit); // ENOENT -> el llamador devuelve false
+  if (stat.isDirectory()) return dotGit;
+  if (!stat.isFile()) return null;
+  const raw = fs.readFileSync(dotGit, 'utf8');
+  const match = /^[ \t]*gitdir:[ \t]*(.+?)[ \t]*$/mi.exec(raw);
+  if (!match) throw new Error('el archivo .git no tiene la linea "gitdir:"');
+  const value = match[1].trim();
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(projectDir, value);
+}
+
+/**
+ * Directorio git COMUN del repositorio. En un worktree, `--git-common-dir` apunta al
+ * `.git` del repositorio principal, que es donde vive el `info/exclude` efectivo.
+ * Si git no esta disponible (o el comando falla) se usa el gitdir resuelto.
+ */
+function resolveGitCommonDir(projectDir, gitDir) {
+  try {
+    const out = execFileSync('git', ['--no-optional-locks', 'rev-parse', '--git-common-dir'], {
+      cwd: projectDir,
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+    if (out) return path.isAbsolute(out) ? path.normalize(out) : path.resolve(projectDir, out);
+  } catch {
+    // Sin git en PATH, repo ilegible o git viejo: se usa el gitdir resuelto.
+  }
+  return gitDir;
+}
+
+/**
+ * Registra rutas autogeneradas en el `info/exclude` del repositorio git sin ensuciar
+ * el `.gitignore` versionado. Funciona en repos normales y en worktrees (donde
+ * `.git` es un archivo y el exclude efectivo es el del repositorio comun).
+ *
+ * Nunca lanza: devuelve false y deja rastro accionable en stderr con CB_GIT_EXCLUDE.
  */
 export function ensureGitExclude(projectDir) {
-  const excludeFile = path.join(projectDir, '.git', 'info', 'exclude');
-  if (!fs.existsSync(path.join(projectDir, '.git'))) return false;
+  const root = path.resolve(projectDir || process.cwd());
   const entries = [
     'kilo.json',
     'kilo.jsonc',
@@ -636,6 +804,26 @@ export function ensureGitExclude(projectDir) {
     'contextbase/.spider-context.json',
     'contextbase/.watcher.pid'
   ];
+
+  let gitDir;
+  try {
+    gitDir = resolveGitDir(root);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return false; // no es un repositorio git: nada que excluir
+    reportAutoconfigError('CB_GIT_EXCLUDE', 'ensureGitExclude', path.join(root, '.git'),
+      `No se pudo leer el gitdir (${err.code || err.message}); revisa el worktree o ejecuta "git worktree repair".`);
+    return false;
+  }
+  if (!gitDir) return false;
+
+  const commonDir = resolveGitCommonDir(root, gitDir);
+  if (!fs.existsSync(commonDir)) {
+    reportAutoconfigError('CB_GIT_EXCLUDE', 'ensureGitExclude', commonDir,
+      `El gitdir resuelto no existe (${gitDir}); el worktree esta roto, ejecuta "git worktree repair".`);
+    return false;
+  }
+
+  const excludeFile = path.join(commonDir, 'info', 'exclude');
   try {
     fs.mkdirSync(path.dirname(excludeFile), { recursive: true });
     const existing = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : '';
@@ -647,7 +835,9 @@ export function ensureGitExclude(projectDir) {
       missing.join('\n') + '\n';
     fs.writeFileSync(excludeFile, existing + block, 'utf8');
     return true;
-  } catch {
+  } catch (err) {
+    reportAutoconfigError('CB_GIT_EXCLUDE', 'ensureGitExclude', excludeFile,
+      `No se pudo escribir el exclude (${err.code || err.message}); verifica permisos sobre ${commonDir}.`);
     return false;
   }
 }

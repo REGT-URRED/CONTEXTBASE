@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { writeAtomic } from './fsutil.js';
+import { cbError, emitCbError, writeAtomic } from './fsutil.js';
 import { loadGuarded } from './guard.js';
 import { baseline } from './guard.js';
 import { loadToolsState } from './registry.js';
+import { isValidId, resolveInside } from './sandbox.js';
 
 function snapshotRoot(cwd) {
   return path.join(cwd, 'contextbase', 'snapshot');
@@ -56,7 +57,7 @@ export function prune(cwd, keep = 5) {
   let dirs = [];
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
-      .filter(d => d.isDirectory())
+      .filter(d => d.isDirectory() && isValidId(d.name))
       .map(d => d.name)
       .sort();
   } catch { return; }
@@ -73,7 +74,7 @@ export function list(cwd) {
   let dirs = [];
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
-      .filter(d => d.isDirectory())
+      .filter(d => d.isDirectory() && isValidId(d.name))
       .map(d => d.name)
       .sort()
       .reverse();
@@ -100,14 +101,39 @@ export async function restore(cwd, id) {
     if (!l.length) return { ok: false, error: 'no snapshots available', restored: [] };
     targetId = l[0].id;
   }
-  const dir = path.join(root, targetId);
+  // Contencion: un id manipulado ("../../x", absolutos) nunca sale del directorio de snapshots.
+  if (typeof targetId !== 'string' || !isValidId(targetId)) {
+    const err = cbError(
+      'CB_PATH_ESCAPE',
+      'snapshot.restore',
+      String(targetId),
+      'el id de snapshot no es valido; usa uno de los ids que lista "contextbase snapshot list".'
+    );
+    emitCbError(err);
+    return { ok: false, error: err.message, restored: [] };
+  }
+  let dir;
+  try {
+    dir = resolveInside(root, targetId, { op: 'snapshot.restore', what: 'id de snapshot' });
+  } catch (err) {
+    emitCbError(err);
+    return { ok: false, error: err.message, restored: [] };
+  }
   if (!fs.existsSync(dir)) return { ok: false, error: 'snapshot not found', restored: [] };
 
-  const guarded = loadGuarded(cwd);
+  const projectRoot = path.resolve(cwd);
+  const guarded = loadGuarded(projectRoot);
   const restored = [];
   for (const rel of guarded) {
+    let dest;
+    try {
+      dest = resolveInside(projectRoot, rel, { op: 'snapshot.restore', what: 'archivo guardado' });
+    } catch (err) {
+      emitCbError(err);
+      continue;
+    }
     const src = path.join(dir, rel);
-    if (copyFileSafe(src, path.join(cwd, rel))) restored.push(rel);
+    if (copyFileSafe(src, dest)) restored.push(rel);
   }
   return { ok: true, restored };
 }

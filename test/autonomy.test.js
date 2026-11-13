@@ -19,7 +19,7 @@ function seedRun(dir, run, workers) {
   const runDir = path.join(dir, 'contextbase', 'swarm', run);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
-    run, agent: 'opencode', prey: 'prueba', flowState: 'EN_ZONA', createdAt: new Date().toISOString(), ttlMinutes: 10, workers,
+    run, base: 'main', agent: 'opencode', prey: 'prueba', flowState: 'EN_ZONA', createdAt: new Date().toISOString(), ttlMinutes: 10, workers,
   }, null, 2));
 }
 

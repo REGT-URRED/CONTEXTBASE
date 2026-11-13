@@ -1,7 +1,9 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { cbError } from './fsutil.js';
 
 /**
  * Sandbox = plan de contingencia.
@@ -60,8 +62,27 @@ function newId() {
   return `${stamp()}-${randomBytes(3).toString('hex')}`;
 }
 
-function isValidId(id) {
+/**
+ * Identificador seguro: letras, numeros, punto, guion y guion bajo.
+ * Nunca "." ni ".." ni separadores de ruta, de modo que no puede escapar de su directorio.
+ */
+export function isValidId(id) {
   return typeof id === 'string' && id !== '' && id !== '.' && id !== '..' && /^[A-Za-z0-9._-]+$/.test(id);
+}
+
+/**
+ * Devuelve el id si es valido; si no, lanza un error accionable de contencion.
+ */
+export function requireId(id, op = 'id', what = 'identificador') {
+  if (!isValidId(id)) {
+    throw cbError(
+      'CB_PATH_ESCAPE',
+      op,
+      String(id),
+      `el ${what} no es valido; usa solo letras, numeros, punto, guion y guion bajo (sin separadores de ruta ni "." / "..").`
+    );
+  }
+  return id;
 }
 
 function writeMeta(dir, meta) {
@@ -138,11 +159,37 @@ function computeChangedFiles(projectDir, sandboxPath) {
   return changed.sort();
 }
 
-function isInside(root, target) {
+/**
+ * Contencion de rutas: `target` resuelto contra `root` debe quedar dentro de `root`.
+ * Es el unico punto de verificacion de rutas del proyecto (ids, workers, snapshots,
+ * entradas de guarded.json y cualquier path.join con datos externos).
+ */
+export function isInside(root, target) {
   const norm = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
   const r = norm(path.resolve(root));
   const t = norm(path.resolve(target));
   return t === r || t.startsWith(r + path.sep);
+}
+
+/**
+ * Resuelve `rel` dentro de `root` y lanza CB_PATH_ESCAPE si la ruta escapa.
+ * Devuelve la ruta absoluta ya normalizada.
+ */
+export function resolveInside(root, rel, { op = 'resolveInside', what = 'ruta' } = {}) {
+  const base = path.resolve(root);
+  if (typeof rel !== 'string' || rel === '' || rel.includes('\0')) {
+    throw cbError('CB_PATH_ESCAPE', op, String(rel), `la ${what} debe ser una cadena no vacia dentro de ${base}.`);
+  }
+  const abs = path.resolve(base, rel);
+  if (!isInside(base, abs)) {
+    throw cbError(
+      'CB_PATH_ESCAPE',
+      op,
+      abs,
+      `la ${what} "${rel}" escapa del area permitida ${base}; usa una ruta relativa que quede dentro del proyecto.`
+    );
+  }
+  return abs;
 }
 
 export function createSandbox(projectDir, options = {}) {
@@ -276,6 +323,59 @@ export function listSandboxes(projectDir) {
   return out;
 }
 
+/**
+ * Devuelve el directorio de backup temporal para una aplicacion de sandbox.
+ */
+function makeBackupDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cb-sandbox-apply-'));
+}
+
+/** Directorios que faltan entre `dir` y `projectRoot` (del mas profundo al mas superficial). */
+function missingDirs(projectRoot, dir) {
+  const out = [];
+  let cur = path.resolve(dir);
+  while (isInside(projectRoot, cur) && cur !== path.resolve(projectRoot) && !fs.existsSync(cur)) {
+    out.push(cur);
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return out;
+}
+
+/**
+ * Revierte los archivos ya aplicados: restaura el backup de los que existian y elimina
+ * los que se crearon. Tambien elimina los directorios que se crearon para ellos.
+ */
+function rollbackApplied(committed) {
+  const failures = [];
+  for (const entry of committed.slice().reverse()) {
+    try {
+      if (entry.existed) {
+        fs.copyFileSync(entry.backup, entry.target);
+      } else {
+        fs.rmSync(entry.target, { force: true });
+      }
+    } catch (err) {
+      failures.push(`${entry.rel}: ${err.message}`);
+      continue;
+    }
+    for (const dir of entry.createdDirs) {
+      try {
+        fs.rmdirSync(dir);
+      } catch {
+        // el directorio no esta vacio: lo dejo como esta
+      }
+    }
+  }
+  return failures;
+}
+
+/**
+ * Promueve los cambios de un sandbox al proyecto real.
+ * Todo se planifica y respalda antes de escribir: si un archivo falla, se revierte
+ * completamente lo aplicado y el error se propaga (nunca se deja el proyecto a medias).
+ */
 export function applySandbox(projectDir, id, options = {}) {
   const result = { applied: [], skipped: [], rejected: [] };
   if (!isValidId(id)) {
@@ -283,7 +383,14 @@ export function applySandbox(projectDir, id, options = {}) {
     return result;
   }
   const projectRoot = path.resolve(projectDir);
-  const dir = path.join(sandboxRoot(projectRoot), id);
+  const root = sandboxRoot(projectRoot);
+  let dir;
+  try {
+    dir = resolveInside(root, id, { op: 'applySandbox', what: 'id de sandbox' });
+  } catch {
+    result.rejected.push(String(id));
+    return result;
+  }
   let meta;
   try {
     meta = JSON.parse(fs.readFileSync(path.join(dir, META_FILE), 'utf8'));
@@ -296,39 +403,92 @@ export function applySandbox(projectDir, id, options = {}) {
   let files = Array.isArray(meta.changedFiles) ? meta.changedFiles : [];
   if (only) files = files.filter((rel) => only.has(String(rel)));
 
+  // 1. Resolver y validar el plan completo antes de tocar el proyecto real.
+  const plan = [];
   for (const rel of files) {
     const raw = String(rel);
     if (!raw || path.isAbsolute(raw) || raw.includes('\0')) {
       result.rejected.push(raw);
       continue;
     }
-    const target = path.resolve(projectRoot, raw);
-    const source = path.resolve(dir, raw);
-    if (!isInside(projectRoot, target) || !isInside(dir, source)) {
+    let target;
+    let source;
+    try {
+      target = resolveInside(projectRoot, raw, { op: 'applySandbox', what: 'ruta destino' });
+      source = resolveInside(dir, raw, { op: 'applySandbox', what: 'ruta origen' });
+    } catch {
       result.rejected.push(raw);
       continue;
     }
     let isFile = false;
-    try { isFile = fs.statSync(source).isFile(); } catch {}
+    try {
+      isFile = fs.statSync(source).isFile();
+    } catch {}
     // Un borrado dentro del sandbox se reporta pero nunca se aplica.
     if (!isFile) {
       result.skipped.push(raw);
       continue;
     }
-    try {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.copyFileSync(source, target);
-      result.applied.push(raw);
-    } catch {
-      result.skipped.push(raw);
+    plan.push({ rel: raw, target, source });
+  }
+
+  if (plan.length === 0) return result;
+
+  // 2. Respaldar los destinos existentes antes de escribir nada.
+  const backupDir = makeBackupDir();
+  const prepared = [];
+  const committed = [];
+  let current = null;
+  try {
+    for (let i = 0; i < plan.length; i += 1) {
+      const item = plan[i];
+      const existed = fs.existsSync(item.target);
+      const backup = path.join(backupDir, String(i));
+      if (existed) fs.copyFileSync(item.target, backup);
+      prepared.push({ ...item, existed, backup });
     }
+
+    // 3. Aplicar con registro para poder revertir.
+    for (const entry of prepared) {
+      current = entry;
+      const createdDirs = missingDirs(projectRoot, path.dirname(entry.target));
+      fs.mkdirSync(path.dirname(entry.target), { recursive: true });
+      fs.copyFileSync(entry.source, entry.target);
+      committed.push({ ...entry, createdDirs });
+      result.applied.push(entry.rel);
+    }
+  } catch (err) {
+    const failures = rollbackApplied(committed);
+    try {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+    } catch {}
+    throw cbError(
+      'CB_SANDBOX_APPLY',
+      'applySandbox',
+      current ? current.target : dir,
+      `fallo al aplicar ${current ? `"${current.rel}"` : 'el sandbox'}: ${err && err.message ? err.message : err}. Se revirtieron ${committed.length} archivo(s)${
+        failures.length ? ` con fallos de rollback en: ${failures.join('; ')}` : ''
+      }.`
+    );
+  }
+
+  try {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  } catch {
+    // backup temporal huerfano en os.tmpdir: no afecta al proyecto
   }
   return result;
 }
 
 export function removeSandbox(projectDir, id) {
   if (!isValidId(id)) return { removed: false };
-  const dir = path.join(sandboxRoot(path.resolve(projectDir)), id);
+  const root = sandboxRoot(path.resolve(projectDir));
+  let dir;
+  try {
+    dir = resolveInside(root, id, { op: 'removeSandbox', what: 'id de sandbox' });
+  } catch {
+    return { removed: false };
+  }
   if (!fs.existsSync(dir)) return { removed: false };
   try {
     fs.rmSync(dir, { recursive: true, force: true });
