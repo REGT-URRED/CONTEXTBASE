@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { analyzeProject } from './scanner.js';
 import { writeContextBase, syncFundamentos } from './generator.js';
@@ -166,8 +167,19 @@ export function silentInit(projectDir, options = {}) {
   return { created: true, files };
 }
 
+function isHomeDir(projectDir) {
+  const root = path.resolve(projectDir);
+  const home = path.resolve(os.homedir());
+  return process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home;
+}
+
 export function autoEnsure(projectDir, options = {}) {
   const root = resolveProject(projectDir);
+  if (isHomeDir(root)) {
+    // El directorio personal no es un proyecto: no se crea ni opencode.json ni
+    // AGENTS.md/kilo.json/contextbase aqui (ese era el "residuo" con schema de Kilo).
+    return { skipped: 'home-directory', strandsRefreshed: false, agentsConfigured: false, componentsRefreshed: false, rulesRefreshed: false, gitHookInstalled: false, webPulsed: false };
+  }
   const summary = {
     initialized: false,
     componentsRefreshed: false,

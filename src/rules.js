@@ -80,6 +80,9 @@ export function injectAgentRules(projectDir) {
   const injected = [];
   for (const file of targetFiles) {
     try {
+      // El directorio destino puede no existir todavia (.agents/rules/, .opencode/rules/...):
+      // sin crearlo la inyeccion fallaba en silencio y el guardia reportaba deriva.
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       injectRuleInFile(file);
       injected.push(path.relative(projectDir, file).replace(/\\/g, '/'));
     } catch {}

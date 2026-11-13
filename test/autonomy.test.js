@@ -92,6 +92,27 @@ test('autogestion: el SDK de Strands se informa sin instalar nada en modo status
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('autogestion: el directorio personal no se inicializa como proyecto', async () => {
+  const dir = tmp('cb-home-skip-');
+  const prevU = process.env.USERPROFILE;
+  const prevH = process.env.HOME;
+  process.env.USERPROFILE = dir;
+  process.env.HOME = dir;
+  try {
+    const { autoEnsure } = await import('../src/auto.js');
+    const { autoConfigureProject } = await import('../src/autoconfig.js');
+    const res = autoConfigureProject(dir, {});
+    assert.equal(res.skipped, 'home-directory');
+    assert.equal(fs.readdirSync(dir).filter(f => /^(kilo.json|opencode.json|AGENTS.md|CLAUDE.md|.mcp.json)$/).length, 0);
+    const res2 = autoEnsure(dir, {});
+    assert.equal(res2.skipped, 'home-directory');
+  } finally {
+    if (prevU === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevU;
+    if (prevH === undefined) delete process.env.HOME; else process.env.HOME = prevH;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('autogestion: la autoinstalacion del SDK se puede desactivar por entorno', () => {
   const dir = tmp('cb-sdk-off-');
   const prev = process.env.CONTEXTBASE_STRANDS_AUTOINSTALL;

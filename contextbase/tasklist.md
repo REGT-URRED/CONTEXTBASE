@@ -89,6 +89,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 - [x] `bin/contextbase.js` con bit ejecutable `100755`
 ---
 
+- [x] [2026-11-13] Residuo home/opencode.json: corregido (guard de home; el home ya no se inicializa como proyecto)
 ## Tareas Pendientes / En Progreso
 - [x] Tool MCP `contextbase_terminals` (list/close/send) integrado y testeado; soporte send nativo: opencode verificado, kilo verificado (v7.8.27, `kilo run --session`); agentes sin sesión nativa (claude/codex, CLIs no instalados) cubiertos por launcher universal `--universal`; inyección de teclas en TUI no soportada por diseño
 

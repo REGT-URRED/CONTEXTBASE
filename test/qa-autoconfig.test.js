@@ -87,6 +87,7 @@ test('P0.2 proyecto: un opencode.json corrupto no se pisa y el fallo es visible'
 
 test('P0.2 el CLI auto con opencode.json corrupto falla con codigo != 0 y deja backup', () => {
   const dir = tmp('cb-cli-corrupt-');
+  const home = tmp('cb-cli-home-');
   fs.mkdirSync(path.join(dir, 'contextbase'), { recursive: true });
   for (const f of ['fundamentos.md', 'changelog.md', 'tasklist.md']) {
     fs.writeFileSync(path.join(dir, 'contextbase', f), '# x\n', 'utf8');
@@ -101,7 +102,7 @@ test('P0.2 el CLI auto con opencode.json corrupto falla con codigo != 0 y deja b
       cwd: dir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: dir, USERPROFILE: dir },
+      env: { ...process.env, HOME: home, USERPROFILE: home },
     });
   } catch (err) {
     status = err.status;

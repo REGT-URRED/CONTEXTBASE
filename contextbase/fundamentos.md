@@ -52,7 +52,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `src/changelog.js`: Inserción de entradas y rotación de la bitácora a archivos anuales.
 - `src/fsutil.js`: Escritura atómica y bloqueo asesor por archivo (concurrencia multiagente).
 - `src/hooks.js`: Hooks Git (`post-commit`, `post-merge`, `post-checkout`) y ejecutor de eventos de ciclo de vida (`runLifecycleHook`).
-- `src/mcp.js`: Servidor MCP sobre stdio con cola secuencial FIFO, instrucciones vivas, 7 resources, 2 prompts, 25 tools (incluye `contextbase_terminals`) y watcher activo.
+- `src/mcp.js`: Servidor MCP sobre stdio con cola secuencial FIFO, instrucciones vivas, 7 resources, 2 prompts, 26 tools (incluye `contextbase_terminals` y `contextbase_egm_review`) y watcher activo.
 - `src/bootstrap.js`: Recomendación y ejecución del arranque de un proyecto (`preview`, `run`).
 - `src/cli_extra.js`: Subcomandos extendidos del CLI (`swarm`, `bootstrap`, `guard`, `snapshot`, `restore`, `tools`, `mission`).
 - `src/detect.js`: Detección de CLIs instalados, binarios en `PATH` y lectura JSON/JSONC de configuraciones MCP.

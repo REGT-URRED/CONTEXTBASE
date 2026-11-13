@@ -92,7 +92,7 @@ src/auto.js             automatización silenciosa, auto-reparación de configs 
 src/autoconfig.js       autoconfiguración resiliente de MCP, permisos y plugins (OpenCode, Kilo, Claude, Cursor)
 src/watcher.js          observador en tiempo real, sincronización del árbol de trabajo y arbitraje continuo
 src/hooks.js            hooks Git y ejecutor de ciclo de vida (session-start, post-tool, session-stop, web-pulse)
-src/mcp.js              servidor MCP stdio (25 tools, resources, prompts, instrucciones vivas y watcher)
+src/mcp.js              servidor MCP stdio (26 tools, resources, prompts, instrucciones vivas y watcher)
 src/scanner.js          escaneo, metadatos, Repomix, redacción
 src/generator.js        documentos y bloque sincronizado
 src/maintenance.js      inventario, frescura y brechas

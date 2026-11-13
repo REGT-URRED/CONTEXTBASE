@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { writeAtomic } from './fsutil.js';
 import { CONTEXTBASE_RULE_BLOCK } from './rules.js';
 import { readJsonc } from './redundancy.js';
-import { appendJsoncArray, setJsoncPath } from './jsonc.js';
+import { setJsoncPath } from './jsonc.js';
 import { configureUniversalBridges } from './universal-agents.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +83,12 @@ function stripContextbasePluginFiles(arr) {
   return (Array.isArray(arr) ? arr : []).filter(p => !isContextbasePluginFile(p));
 }
 
+function removeFileIfExists(file) {
+  try {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch {}
+}
+
 function ensureArrayItem(arr, item) {
   const list = Array.isArray(arr) ? arr.slice() : [];
   if (!list.includes(item)) list.push(item);
@@ -99,18 +105,6 @@ function configEq(a, b) {
     return v;
   };
   return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
-}
-
-/**
- * Inserta `item` en el array JSONC de la ruta indicada sin destruir comentarios.
- * Complementa a appendJsoncArray (que devuelve null si el array no existe): crea el array.
- */
-function ensureJsoncArrayItem(raw, parsed, path, item) {
-  const src = path.reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), parsed);
-  if (Array.isArray(src) && src.includes(item)) return raw;
-  const appended = appendJsoncArray(raw, path, item);
-  if (appended !== null) return appended;
-  return setJsoncPath(raw, path, [...(Array.isArray(src) ? src : []), item]);
 }
 
 /**
@@ -150,7 +144,7 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
   const safeNode = JSON.stringify(nodePath);
   return [
     '// Generado por ContextBase - Plugin de automatizacion de ciclo de vida y Telarana para OpenCode y Kilo Code',
-    "import { execFileSync, spawn } from 'node:child_process';",
+    "import { execFile, execFileSync, spawn } from 'node:child_process';",
     "import fs from 'node:fs';",
     "import path from 'node:path';",
     '',
@@ -346,21 +340,142 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '  };',
     '};',
     '',
-    '// OpenCode v2 exige un default export con id y setup/effect; una funcion suelta se descarta en silencio.',
+    '// OpenCode V2 (Promise API): setup(ctx) registra hooks via ctx. V1 usa el export nombrado.',
     'async function setupContextBaseAuto(ctx = {}) {',
-    '  const dir = (ctx && ctx.location && ctx.location.directory) || process.cwd();',
-    '  const plugin = await ContextBaseAutoPlugin({ directory: dir, worktree: dir });',
-    '  // v2 ignora los hooks que devuelve la factory v1: el pulso periodico mantiene vivo el digest y la sincronizacion.',
-    '  if (plugin && typeof plugin === "object") {',
+    '  try {',
+    '    const hasSessionHook = ctx && ctx.session && typeof ctx.session.hook === "function";',
+    '    const hasToolHook = ctx && ctx.tool && typeof ctx.tool.hook === "function";',
+    '    if (!hasSessionHook && !hasToolHook) return;',
+    '',
+    '    const workDir = (ctx.location && ctx.location.directory) || ctx.directory || ctx.worktree || process.cwd();',
+    '    const spiderMeta = readSpiderContext(workDir);',
+    '    const touchedFiles = new Set();',
+    '    const registrations = [];',
+    '    let digest = "";',
+    '    let digestAt = 0;',
+    '    let refreshing = null;',
+    '',
+    '    const runHookPromise = (event, extra = []) => new Promise((resolve) => {',
+    '      try {',
+    '        const resolved = resolveCbCommand(workDir);',
+    '        if (!resolved) return resolve("");',
+    '        execFile(resolved.bin, [...resolved.prefix, "hook-run", event, ...extra], {',
+    '          cwd: workDir, encoding: "utf8", timeout: 8000, windowsHide: true, maxBuffer: 1048576',
+    '        }, (err, stdout) => resolve(err ? "" : String(stdout || "").trim()));',
+    '      } catch { resolve(""); }',
+    '    });',
+    '',
+    '    const refreshDigest = (force = false) => {',
+    '      const now = Date.now();',
+    '      if (!force && digest && now - digestAt < 60000) return Promise.resolve();',
+    '      if (refreshing) return refreshing;',
+    '      refreshing = runHookPromise("session-start")',
+    '        .then((out) => { if (out) { digest = out; digestAt = Date.now(); } })',
+    '        .catch(() => {})',
+    '        .finally(() => { refreshing = null; });',
+    '      return refreshing;',
+    '    };',
+    '',
+    '    const pushSystem = (event) => {',
+    '      if (!event || !Array.isArray(event.system) || !digest) return;',
+    '      const marker = "<!-- CONTEXTBASE:LIVE_DIGEST -->";',
+    '      const endMarker = "<!-- /CONTEXTBASE:LIVE_DIGEST -->";',
+    '      const block = `${marker}\\n${digest}\\n${endMarker}`;',
+    '      const existing = event.system.find((part) => part && typeof part.text === "string" && part.text.includes(marker));',
+    '      if (!existing) { event.system.push({ type: "text", text: block }); return; }',
+    '      const current = String(existing.text);',
+    '      const start = current.indexOf(marker);',
+    '      const end = current.indexOf(endMarker);',
+    '      const tail = end >= 0 ? current.slice(end + endMarker.length) : "";',
+    '      existing.text = current.slice(0, start) + block + tail;',
+    '    };',
+    '',
+    '    const toolInput = (event) => (event && (event.input || event.args)) || {};',
+    '    const toolTarget = (input) => (input && typeof input === "object" && (input.filePath || input.path || input.file)) || "";',
+    '',
+    '    const checkIsolation = (event) => {',
+    '      if (!spiderMeta || !Array.isArray(spiderMeta.forbiddenFiles)) return;',
+    '      const toolName = String((event && event.tool) || "").toLowerCase();',
+    '      if (!MUTATING_TOOLS.has(toolName) || toolName === "bash" || toolName === "todowrite") return;',
+    '      const rawTarget = toolTarget(toolInput(event));',
+    '      if (!rawTarget) return;',
+    '      const relTarget = path.isAbsolute(rawTarget) ? path.relative(workDir, rawTarget) : String(rawTarget);',
+    '      const normTarget = path.resolve(workDir, relTarget).toLowerCase();',
+    '      const forbidden = spiderMeta.forbiddenFiles.map((f) => path.resolve(workDir, String(f)).toLowerCase());',
+    '      if (forbidden.includes(normTarget)) {',
+    '        throw new Error(`[ContextBase Telarana] Aislamiento de hilo activo: el archivo "${relTarget}" pertenece a otra Arana. Modifica solo tus archivos asignados: ${(spiderMeta.assignedFiles || []).join(", ")}`);',
+    '      }',
+    '    };',
+    '',
+    '    const trackResult = (event) => {',
+    '      const toolName = String((event && event.tool) || "").toLowerCase();',
+    '      if (!MUTATING_TOOLS.has(toolName) && !toolName.startsWith("contextbase_")) return;',
+    '      const input = toolInput(event);',
+    '      const target = toolTarget(input) || (event && event.result && event.result.metadata && event.result.metadata.filePath) || "";',
+    '      if (target) touchedFiles.add(String(target));',
+    '      if (toolName === "todowrite" && Array.isArray(input.todos)) {',
+    '        for (const todo of input.todos) {',
+    '          const content = todo && (todo.content || todo.text || todo.description);',
+    '          if (!content) continue;',
+    '          if (todo.status === "completed") runAsyncHook("task-done", workDir, [String(content)]);',
+    '          else if (todo.status === "pending" || todo.status === "in_progress") runAsyncHook("task-add", workDir, [String(content)]);',
+    '        }',
+    '      }',
+    '      digestAt = 0;',
+    '    };',
+    '',
+    '    void refreshDigest(true);',
+    '',
+    '    if (hasSessionHook) {',
+    '      try {',
+    '        const reg = await ctx.session.hook("context", (event) => { try { pushSystem(event); } catch {} });',
+    '        if (reg) registrations.push(reg);',
+    '      } catch {}',
+    '    }',
+    '',
+    '    if (hasToolHook) {',
+    '      try {',
+    '        const reg = await ctx.tool.hook("execute.before", (event) => {',
+    '          try { checkIsolation(event); } catch (err) {',
+    '            if (err && String(err.message || "").includes("[ContextBase Telarana]")) throw err;',
+    '          }',
+    '        });',
+    '        if (reg) registrations.push(reg);',
+    '      } catch {}',
+    '      try {',
+    '        const reg = await ctx.tool.hook("execute.after", (event) => { try { trackResult(event); } catch {} });',
+    '        if (reg) registrations.push(reg);',
+    '      } catch {}',
+    '    }',
+    '',
     '    const timer = setInterval(() => {',
-    '      try { runSyncHook("web-pulse", dir); } catch {}',
-    '    }, 30000);',
+    '      void runHookPromise("web-pulse");',
+    '      void refreshDigest(true);',
+    '    }, 60000);',
     '    if (typeof timer.unref === "function") timer.unref();',
+    '',
+    '    return async () => {',
+    '      clearInterval(timer);',
+    '      if (touchedFiles.size > 0) {',
+    '        const list = Array.from(touchedFiles).slice(0, 15);',
+    '        touchedFiles.clear();',
+    '        await runHookPromise("session-stop", list);',
+    '      }',
+    '      for (const registration of registrations) {',
+    '        try { await registration.dispose?.(); } catch {}',
+    '      }',
+    '    };',
+    '  } catch {',
+    '    return;',
     '  }',
-    '  return plugin;',
     '}',
     '',
-    'export default { id: "contextbase-auto", server: ContextBaseAutoPlugin, setup: setupContextBaseAuto };',
+    '// V2 reads id + setup; V1 reads the named server export.',
+    'export default {',
+    '  id: "contextbase-auto",',
+    '  server: ContextBaseAutoPlugin,',
+    '  setup: setupContextBaseAuto',
+    '};',
     ''
   ].join('\n');
 }
@@ -440,9 +555,8 @@ export function configureKilo(projectDir, options = {}) {
   writeAtomic(kiloPluginFile, pluginCode);
   written.push('.kilo/plugins/contextbase-auto.js');
 
-  const kiloPluginSingular = path.join(projectDir, '.kilo', 'plugin', 'contextbase-auto.js');
-  writeAtomic(kiloPluginSingular, pluginCode);
-  written.push('.kilo/plugin/contextbase-auto.js');
+  // V2 descubre .kilo/plugins; la copia singular duplicaba todos los hooks.
+  removeFileIfExists(path.join(projectDir, '.kilo', 'plugin', 'contextbase-auto.js'));
 
   const kilocodeMcpFile = path.join(projectDir, '.kilocode', 'mcp.json');
   const kcMcpParsed = readJsonSafe(kilocodeMcpFile);
@@ -505,9 +619,8 @@ export function configureOpenCode(projectDir, options = {}) {
   writeAtomic(pluginFile, pluginCode);
   written.push('.opencode/plugins/contextbase-auto.js');
 
-  const pluginSingularFile = path.join(projectDir, '.opencode', 'plugin', 'contextbase-auto.js');
-  writeAtomic(pluginSingularFile, pluginCode);
-  written.push('.opencode/plugin/contextbase-auto.js');
+  // V2 descubre .opencode/plugins; la copia singular duplicaba todos los hooks.
+  removeFileIfExists(path.join(projectDir, '.opencode', 'plugin', 'contextbase-auto.js'));
 
   const skillSource = path.resolve(__dirname, '..', 'skills', 'contextbase', 'SKILL.md');
   if (fs.existsSync(skillSource)) {
@@ -672,8 +785,23 @@ export function configureCursorAndIde(projectDir, options = {}) {
 /**
  * Configura todos los agentes en el proyecto actual (OpenCode, Kilo, Claude, Cursor, Windsurf y puentes universales).
  */
+/**
+ * El directorio personal no es un proyecto: escribir ./opencode.json, kilo.json,
+ * AGENTS.md... ahi genera un residuo que Kilo re-normaliza con su propio schema y
+ * que OpenCode carga como "proyecto". Se salta el scaffold de proyecto; la config
+ * global de ~/.config/ sigue operando con normalidad.
+ */
+function isHomeProjectDir(projectDir) {
+  const root = path.resolve(projectDir);
+  const home = path.resolve(os.homedir());
+  return process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home;
+}
+
 export function autoConfigureProject(projectDir = process.cwd(), options = {}) {
   const root = path.resolve(projectDir);
+  if (isHomeProjectDir(root)) {
+    return { projectDir: root, files: [], failures: [], skipped: 'home-directory' };
+  }
   const files = [];
   const failures = [];
 
@@ -809,12 +937,10 @@ export function autoConfigureGlobal(options = {}) {
   const opencodeGlobalDir = path.join(homeDir, '.config', 'opencode');
   if (fs.existsSync(opencodeGlobalDir) || options.forceGlobal) {
     const pluginPath = path.join(opencodeGlobalDir, 'plugins', 'contextbase-auto.js');
-    const pluginSingularPath = path.join(opencodeGlobalDir, 'plugin', 'contextbase-auto.js');
     try {
       writeAtomic(pluginPath, pluginCode);
       configured.push(pluginPath);
-      writeAtomic(pluginSingularPath, pluginCode);
-      configured.push(pluginSingularPath);
+      removeFileIfExists(path.join(opencodeGlobalDir, 'plugin', 'contextbase-auto.js'));
     } catch (err) {
       failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
     }
@@ -827,6 +953,7 @@ export function autoConfigureGlobal(options = {}) {
         {
           value(cfg) {
             cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
+            cfg.plugins = stripContextbasePluginFiles(cfg.plugins);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',
@@ -840,8 +967,10 @@ export function autoConfigureGlobal(options = {}) {
           },
           jsonc(raw, parsed) {
             let out = raw;
-            if (!Array.isArray(parsed.plugin) || !parsed.plugin.includes(pluginPath.replace(/\\/g, '/'))) {
-              out = ensureJsoncArrayItem(out, parsed, ['plugin'], pluginPath.replace(/\\/g, '/'));
+            for (const key of ['plugin', 'plugins']) {
+              if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
+                out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+              }
             }
             const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
             if (existingPerm !== 'allow') {
@@ -878,12 +1007,10 @@ export function autoConfigureGlobal(options = {}) {
   const kiloGlobalDir = path.join(homeDir, '.config', 'kilo');
   if (fs.existsSync(kiloGlobalDir) || options.forceGlobal) {
     const pluginPath = path.join(kiloGlobalDir, 'plugins', 'contextbase-auto.js');
-    const pluginSingularPath = path.join(kiloGlobalDir, 'plugin', 'contextbase-auto.js');
     try {
       writeAtomic(pluginPath, pluginCode);
       configured.push(pluginPath);
-      writeAtomic(pluginSingularPath, pluginCode);
-      configured.push(pluginSingularPath);
+      removeFileIfExists(path.join(kiloGlobalDir, 'plugin', 'contextbase-auto.js'));
     } catch (err) {
       failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
     }
@@ -896,6 +1023,7 @@ export function autoConfigureGlobal(options = {}) {
         {
           value(cfg) {
             cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
+            cfg.plugins = stripContextbasePluginFiles(cfg.plugins);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',
@@ -905,8 +1033,10 @@ export function autoConfigureGlobal(options = {}) {
           },
           jsonc(raw, parsed) {
             let out = raw;
-            if (!Array.isArray(parsed.plugin) || !parsed.plugin.includes(pluginPath.replace(/\\/g, '/'))) {
-              out = ensureJsoncArrayItem(out, parsed, ['plugin'], pluginPath.replace(/\\/g, '/'));
+            for (const key of ['plugin', 'plugins']) {
+              if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
+                out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+              }
             }
             const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
             if (existingPerm !== 'allow') {
