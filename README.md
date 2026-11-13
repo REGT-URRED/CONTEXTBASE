@@ -78,6 +78,48 @@ contextbase status
 
 ---
 
+## Modelo EGM (Elephant-Goldfish) - revision adversarial determinista
+
+Revision adversarial con 10 personas y 5 estandares: cada persona busca un defecto distinto y el resultado
+se sintetiza en un veredicto unico. Sin modelos, sin red: reglas deterministas y reproducibles.
+
+| Comando | Que hace |
+| :--- | :--- |
+| `contextbase egm review [archivo]` | Revisa un documento (o el proyecto) y emite `PASS`, `REFIX`, `RERUN` o `FAIL` |
+| `contextbase egm drift --docs docs` | Detecta drift entre la documentacion y el codigo (`missing_feature`, `incomplete_model`, `logic_shortcut`, `architectural_divergence`) |
+| `contextbase egm personas` | Catalogo de las 10 personas y su criterio de aprobado |
+| `contextbase egm standards` | Catalogo de los 5 estandares y sus reglas |
+| `contextbase egm skills` | Catalogo de las 7 skills del modelo |
+
+Opciones: `--target <archivo>`, `--base <ref>` (compara contra una referencia git real), `--docs <dir>`,
+`--json` (salida estructurada) y `--max-rounds <n>` (convergencia por rondas limpias).
+
+**Vivo, no manual.** El modelo corre solo: el heartbeat de ContextBase (`contextbase auto`) ejecuta un
+pulso que revisa el documento vivo del proyecto y la deriva documentacion-codigo, y deja el veredicto en
+`contextbase/egm/verdict.json`. Ese veredicto aparece en el digest que el agente lee al iniciar sesion, con la
+accion concreta a ejecutar. La skill `contextbase-egm` (instalada globalmente en todos los agentes) ensena el
+bucle completo: revisar -> corregir blocker/major -> volver a revisar -> `PASS`.
+
+---
+
+## Sandbox - plan de contingencia
+
+Toda operacion experimental o delicada puede ejecutarse sobre una **copia aislada** del proyecto: si el
+experimento falla, el proyecto real no se toco. El resultado se inspecciona y solo entonces se promueve.
+
+| Comando | Que hace |
+| :--- | :--- |
+| `contextbase sandbox run <cmd> [args]` | Ejecuta un comando dentro del sandbox y lista los archivos que cambian |
+| `contextbase sandbox list` | Lista los sandboxes existentes |
+| `contextbase sandbox apply <id>` | Promueve al proyecto real los cambios del sandbox |
+| `contextbase sandbox rm <id>` | Descarta el sandbox |
+
+Los comandos delicados aceptan ademas `--sandbox` (`contextbase auto --sandbox`, `contextbase init --sandbox`):
+en ese modo la configuracion se aplica dentro del sandbox y el proyecto real queda intacto hasta que se
+promueve a mano. Codigos de salida: `0` ok, `1` fallo, `2` uso incorrecto.
+
+---
+
 ## Arquitectura de Archivos
 
 ```
@@ -101,6 +143,8 @@ src/changelog.js        bitácora y rotación
 src/fsutil.js           escritura atómica y bloqueo
 src/rules.js            inyección de reglas con versión
 src/review.js           revisión tipo thermos: diff, contenidos, prompts y merge
+src/egm.js              modelo de calidad EGM (Elephant-Goldfish): revision adversarial, drift y catalogo
+src/sandbox.js          sandbox de contingencia: aisla operaciones delicadas y permite promover el resultado
 src/redundancy.js       redundancia del entorno global
 src/slop.js             delivery gate antislop sobre líneas agregadas
 src/installer.js        Skill y plugins globales multi-CLI

@@ -51,6 +51,45 @@ function ruleVersions(projectDir) {
   return { present, versions: outdated };
 }
 
+const EGM_VERDICT_FILE = path.join('contextbase', 'egm', 'verdict.json');
+const EGM_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function countOf(value) {
+  if (Array.isArray(value)) return value.length;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Estado EGM persistido por el pulso del latido en contextbase/egm/verdict.json.
+ * Devuelve null si no hay veredicto legible: el digest omite la seccion entera
+ * en vez de mostrar un control de calidad vacio o inventado.
+ */
+export function collectEgmState(projectDir) {
+  try {
+    const file = path.join(projectDir, EGM_VERDICT_FILE);
+    if (!fs.existsSync(file)) return null;
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!raw || typeof raw !== 'object') return null;
+    const verdict = raw.verdict || raw.veredicto || null;
+    if (!verdict) return null;
+    const stamp = raw.at || raw.revisado || raw.timestamp || null;
+    const atMs = stamp ? Date.parse(stamp) : NaN;
+    return {
+      verdict: String(verdict),
+      blockers: countOf(raw.blockers ?? raw.blocker),
+      majors: countOf(raw.majors ?? raw.major),
+      nits: countOf(raw.nits ?? raw.nit),
+      drift: countOf(raw.drift),
+      at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : null,
+      // Sin fecha no se puede probar frescura: se trata como vencido.
+      stale: !Number.isFinite(atMs) || (Date.now() - atMs) > EGM_MAX_AGE_MS
+    };
+  } catch {
+    return null;
+  }
+}
+
 function collectWebSummary(projectDir) {
   try {
     const run = latestRun(projectDir);
@@ -85,6 +124,7 @@ export function collectState(projectDir) {
     security: { ...parseSecurity(componentesText), informe: files['componentes.md'].exists ? files['componentes.md'].days : null },
     rules: ruleVersions(projectDir),
     web: collectWebSummary(projectDir),
+    egm: collectEgmState(projectDir),
     guard: (() => { try { const r = guardCheck(projectDir); return { status: r.status, drifts: (r.drifts || []).map(d => ({ file: d.file, kind: d.kind })) }; } catch { return { status: 'unknown', drifts: [] }; } })()
   };
 }
@@ -131,6 +171,15 @@ export function buildDigest(state, ownVersion) {
   if (!state.guard) lines.push('- Sin datos.');
   else if (state.guard.status === 'ok') lines.push('- OK');
   else lines.push('- Deriva: ' + (state.guard.drifts || []).map(d => d.file + ' (' + d.kind + ')').join(', '));
+  // Control de calidad EGM: 3 lineas como maximo, y solo si hay veredicto.
+  if (state.egm) {
+    const egm = state.egm;
+    lines.push('');
+    lines.push('## Control de calidad EGM');
+    lines.push('Veredicto: ' + egm.verdict + ' | Blockers: ' + egm.blockers + ' | Majors: ' + egm.majors + ' | Nits: ' + egm.nits + ' | Drift: ' + egm.drift + ' | Revisado: ' + (egm.at || 'sin fecha') + (egm.stale ? ' | Estado: vencido' : ''));
+    if (egm.stale) lines.push('Accion: ejecuta "contextbase egm review" y refresca el veredicto (vencido hace mas de 7 dias).');
+    else if (egm.verdict !== 'PASS') lines.push('Accion: ejecuta "contextbase egm review" y corrige los blocker/major antes de cerrar.');
+  }
   lines.push('');
   lines.push('## Telaraña y Enjambre (Web / Swarm)');
   if (state.web) {

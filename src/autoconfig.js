@@ -113,8 +113,8 @@ function configEq(a, b) {
  */
 export function hasStaleAgentConfig(projectDir) {
   const root = path.resolve(projectDir || process.cwd());
-  const opencodeFile = path.join(root, 'opencode.json');
-  const kiloFile = path.join(root, 'kilo.json');
+  const opencodeFile = pickOpenCodeConfigPath(root).file;
+  const kiloFile = pickKiloConfigPath(root).file;
   const pluginFile = path.join(root, '.opencode', 'plugins', 'contextbase-auto.js');
   if (!fs.existsSync(opencodeFile) || !fs.existsSync(kiloFile) || !fs.existsSync(pluginFile)) {
     return true;
@@ -135,14 +135,90 @@ export function hasStaleAgentConfig(projectDir) {
 }
 
 /**
+ * Verifica estaticamente el source generado del plugin antes de escribirlo a disco.
+ *
+ * OpenCode v2 espera un default export objeto con `id` y `setup` (API Promise).
+ * Incluir `effect` cuelga la activacion del plugin: el runtime lo prefiere sobre
+ * `setup` y espera hooks de ctx que nunca resuelven. Esta validacion existe para
+ * que un generador roto nunca llegue al disco.
+ *
+ * Reglas:
+ * - sin `export default` -> "no default export object"
+ * - el default export no es un objeto literal `{...}` -> "default export is not an object"
+ * - al objeto le falta la clave `id` o `setup` -> "missing <clave>"
+ * - el objeto declara `effect` -> "effect is not allowed"
+ *
+ * @param {string} source codigo JS generado
+ * @returns {{ ok: boolean, problems: string[] }}
+ */
+export function validateOpenCodePluginSource(source) {
+  const problems = [];
+  const text = String(source == null ? '' : source);
+
+  // Ultimo `export default` real (ignora menciones dentro de comentarios o strings de linea).
+  const re = /^[ \t]*export\s+default\b/gm;
+  let at = -1;
+  let match;
+  while ((match = re.exec(text)) !== null) at = match.index + match[0].length;
+  if (at < 0) return { ok: false, problems: ['no default export object'] };
+
+  if (!text.slice(at).trimStart().startsWith('{')) {
+    return { ok: false, problems: ['default export is not an object'] };
+  }
+
+  // Extrae el objeto balanceado, saltando llaves dentro de strings.
+  const start = text.indexOf('{', at);
+  let depth = 0;
+  let quote = '';
+  let end = text.length;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') { i += 1; continue; }
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) { end = i + 1; break; }
+    }
+  }
+  const block = text.slice(start, end);
+
+  for (const key of ['id', 'setup']) {
+    if (!new RegExp(`[{,\\s]${key}\\s*:`).test(block)) problems.push(`missing ${key}`);
+  }
+  if (/[{,\s]effect\s*:/.test(block)) problems.push('effect is not allowed');
+
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Valida el source del plugin y, si no cumple el contrato, lo reporta y lanza.
+ * Nunca deja que un plugin roto se escriba a disco.
+ */
+function ensureValidPluginSource(source, op, file) {
+  const { ok, problems } = validateOpenCodePluginSource(source);
+  if (ok) return source;
+  const msg = `Plugin OpenCode invalido (${problems.join(', ')}); no se escribio.`;
+  reportConfigError('CONFIG_PLUGIN_INVALID', op, msg, { file });
+  throw new Error(msg);
+}
+
+/**
  * Genera el codigo del plugin automatico para OpenCode y Kilo Code.
  * Compatible con la firma de funcion V1 y objeto de plugin V2, con auto-resolución
  * de binario, aislamiento de hilo de Araña y pulso automático de Telaraña.
+ *
+ * El source se autovalida antes de devolverse. No incluye `effect` a proposito:
+ * OpenCode v2 lo prefiere sobre `setup` y la activacion del plugin queda colgada.
  */
 export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = getNodePath()) {
   const safeBin = JSON.stringify(binPath);
   const safeNode = JSON.stringify(nodePath);
-  return [
+  const source = [
     '// Generado por ContextBase - Plugin de automatizacion de ciclo de vida y Telarana para OpenCode y Kilo Code',
     "import { execFile, execFileSync, spawn } from 'node:child_process';",
     "import fs from 'node:fs';",
@@ -470,7 +546,9 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '  }',
     '}',
     '',
-    '// V2 reads id + setup; V1 reads the named server export.',
+    '// Contrato OpenCode v2: default export objeto con id + setup (API Promise).',
+    '// No incluir effect: si existe, el runtime lo prefiere y la activacion del',
+    '// plugin queda colgada esperando hooks de ctx. setup es el contrato soportado.',
     'export default {',
     '  id: "contextbase-auto",',
     '  server: ContextBaseAutoPlugin,',
@@ -478,6 +556,12 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '};',
     ''
   ].join('\n');
+
+  const check = validateOpenCodePluginSource(source);
+  if (!check.ok) {
+    throw new Error(`Plugin de ContextBase generado invalido: ${check.problems.join(', ')}`);
+  }
+  return source;
 }
 
 /**
@@ -510,6 +594,7 @@ export function ensureGitExclude(projectDir) {
     'contextbase/strands/',
     'contextbase/snapshot/',
     'contextbase/swarm/',
+    'contextbase/egm/',
     'contextbase/web/',
     'contextbase/control/',
     'contextbase/agents.json',
@@ -575,33 +660,58 @@ export function configureKilo(projectDir, options = {}) {
   writeAtomic(kilocodeMcpFile, JSON.stringify(kcMcp, null, 2) + '\n');
   written.push('.kilocode/mcp.json');
 
-  const kiloFile = path.join(projectDir, 'kilo.json');
-  const cfg = readJsonSafe(kiloFile);
-  if (cfg === null && fs.existsSync(kiloFile)) {
-    // Config corrupta: no se pisa. Se deja backup y el fallo se reporta.
-    backupConfig(kiloFile);
-    reportConfigError('CONFIG_INVALID_JSON', 'configureKilo', 'kilo.json no es JSON valido; no se modifico.', { file: kiloFile });
-    throw new Error('kilo.json no es JSON valido; no se modifico.');
+  const target = pickKiloConfigPath(projectDir);
+  const mergeFailures = [];
+  const res = mergeUserConfig(
+    target,
+    {},
+    [
+      {
+        value(cfg) {
+          cfg.instructions = ensureArrayItem(ensureArrayItem(cfg.instructions, 'AGENTS.md'), '.kilo/rules/contextbase.md');
+          cfg.plugin = ensureArrayItem(cfg.plugin, './.kilo/plugins/contextbase-auto.js');
+          cfg.permission = {
+            read: 'allow',
+            glob: 'allow',
+            grep: 'allow',
+            ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
+            'contextbase_*': 'allow'
+          };
+          if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
+          cfg.mcp.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
+        },
+        jsonc(raw, parsed) {
+          let out = raw;
+          const instructions = ensureArrayItem(ensureArrayItem(parsed.instructions, 'AGENTS.md'), '.kilo/rules/contextbase.md');
+          if (!configEq(parsed.instructions, instructions)) out = setJsoncPath(out, ['instructions'], instructions);
+          const plugins = ensureArrayItem(parsed.plugin, './.kilo/plugins/contextbase-auto.js');
+          if (!configEq(parsed.plugin, plugins)) out = setJsoncPath(out, ['plugin'], plugins);
+          const wantPerm = {
+            read: 'allow',
+            glob: 'allow',
+            grep: 'allow',
+            ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
+            'contextbase_*': 'allow'
+          };
+          if (!configEq(parsed.permission, wantPerm)) out = setJsoncPath(out, ['permission'], wantPerm);
+          const want = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
+          const have = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp.contextbase : undefined;
+          if (!configEq(have, want)) {
+            const mcpBase = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : {};
+            out = setJsoncPath(out, ['mcp'], { ...mcpBase, contextbase: want });
+          }
+          return out;
+        }
+      }
+    ],
+    mergeFailures,
+    'configureKilo'
+  );
+  if (!res.written) {
+    // Config corrupta: mergeUserConfig ya dejo backup y reporto el fallo; no se pisa.
+    throw new Error(`${path.basename(res.file)} no es JSON valido; no se modifico.`);
   }
-  const kiloCfg = cfg || {};
-  kiloCfg.instructions = ensureArrayItem(ensureArrayItem(kiloCfg.instructions, 'AGENTS.md'), '.kilo/rules/contextbase.md');
-  kiloCfg.plugin = ensureArrayItem(kiloCfg.plugin, './.kilo/plugins/contextbase-auto.js');
-  kiloCfg.permission = {
-    read: 'allow',
-    glob: 'allow',
-    grep: 'allow',
-    ...(kiloCfg.permission && typeof kiloCfg.permission === 'object' ? kiloCfg.permission : {}),
-    'contextbase_*': 'allow'
-  };
-  if (!kiloCfg.mcp || typeof kiloCfg.mcp !== 'object') kiloCfg.mcp = {};
-  kiloCfg.mcp.contextbase = {
-    type: 'local',
-    command: [nodePath, binPath, 'mcp'],
-    enabled: true
-  };
-  if (fs.existsSync(kiloFile)) backupConfig(kiloFile);
-  writeAtomic(kiloFile, JSON.stringify(kiloCfg, null, 2) + '\n');
-  written.push('kilo.json');
+  written.push(path.basename(res.file));
 
   return written;
 }
@@ -613,9 +723,13 @@ export function configureOpenCode(projectDir, options = {}) {
   const binPath = options.binPath || getBinPath();
   const nodePath = options.nodePath || getNodePath();
   const written = [];
-  const pluginCode = buildOpenCodePluginSource(binPath, nodePath);
-
   const pluginFile = path.join(projectDir, '.opencode', 'plugins', 'contextbase-auto.js');
+  const pluginCode = ensureValidPluginSource(
+    buildOpenCodePluginSource(binPath, nodePath),
+    'configureOpenCode',
+    pluginFile
+  );
+
   writeAtomic(pluginFile, pluginCode);
   written.push('.opencode/plugins/contextbase-auto.js');
 
@@ -629,32 +743,62 @@ export function configureOpenCode(projectDir, options = {}) {
     written.push('.opencode/skills/contextbase/SKILL.md');
   }
 
-  const opencodeFile = path.join(projectDir, 'opencode.json');
-  const parsed = readJsonSafe(opencodeFile);
-  if (parsed === null && fs.existsSync(opencodeFile)) {
-    // Config corrupta: no se pisa. Se deja backup y el fallo se reporta.
-    backupConfig(opencodeFile);
-    reportConfigError('CONFIG_INVALID_JSON', 'configureOpenCode', 'opencode.json no es JSON valido; no se modifico.', {
-      file: opencodeFile,
-    });
-    throw new Error('opencode.json no es JSON valido; no se modifico.');
+  const target = pickOpenCodeConfigPath(projectDir);
+  const mergeFailures = [];
+  const res = mergeUserConfig(
+    target,
+    {},
+    [
+      {
+        value(cfg) {
+          cfg.instructions = ensureArrayItem(cfg.instructions, 'AGENTS.md');
+          cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
+          cfg.permission = {
+            ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
+            'contextbase_*': 'allow'
+          };
+          if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
+          cfg.mcp.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
+        },
+        jsonc(raw, parsed) {
+          let out = raw;
+          const instructions = ensureArrayItem(parsed.instructions, 'AGENTS.md');
+          if (!configEq(parsed.instructions, instructions)) out = setJsoncPath(out, ['instructions'], instructions);
+          for (const key of ['plugin', 'plugins']) {
+            if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
+              out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+            }
+          }
+          const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
+          if (existingPerm !== 'allow') {
+            out = setJsoncPath(out, ['permission'], {
+              ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
+              'contextbase_*': 'allow'
+            });
+          }
+          const mcpServers = parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers && typeof parsed.mcp.servers === 'object';
+          const want = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
+          const have = mcpServers
+            ? parsed.mcp.servers.contextbase
+            : (parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp.contextbase : undefined);
+          if (!configEq(have, want)) {
+            const mcpBase = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : {};
+            out = setJsoncPath(out, ['mcp'], mcpServers
+              ? { ...mcpBase, servers: { ...mcpBase.servers, contextbase: want } }
+              : { ...mcpBase, contextbase: want });
+          }
+          return out;
+        }
+      }
+    ],
+    mergeFailures,
+    'configureOpenCode'
+  );
+  if (!res.written) {
+    // Config corrupta: mergeUserConfig ya dejo backup y reporto el fallo; no se pisa.
+    throw new Error(`${path.basename(res.file)} no es JSON valido; no se modifico.`);
   }
-  const cfg = parsed || {};
-  cfg.instructions = ensureArrayItem(cfg.instructions, 'AGENTS.md');
-  cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
-  cfg.permission = {
-    ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
-    'contextbase_*': 'allow'
-  };
-  if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
-  cfg.mcp.contextbase = {
-    type: 'local',
-    command: [nodePath, binPath, 'mcp'],
-    enabled: true
-  };
-  if (fs.existsSync(opencodeFile)) backupConfig(opencodeFile);
-  writeAtomic(opencodeFile, JSON.stringify(cfg, null, 2) + '\n');
-  written.push('opencode.json');
+  written.push(path.basename(res.file));
 
   return written;
 }
@@ -796,6 +940,7 @@ function isHomeProjectDir(projectDir) {
   const home = path.resolve(os.homedir());
   return process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home;
 }
+export { isHomeProjectDir };
 
 export function autoConfigureProject(projectDir = process.cwd(), options = {}) {
   const root = path.resolve(projectDir);
@@ -890,8 +1035,6 @@ function mergeUserConfig(target, base, mutations, failures, op) {
     return { file, written: false };
   }
 
-  backupConfig(file);
-
   if (format === 'jsonc') {
     let merged = raw;
     try {
@@ -903,9 +1046,15 @@ function mergeUserConfig(target, base, mutations, failures, op) {
       failures.push(reportConfigError('CONFIG_MERGE_FAILED', op, err.message, { file }));
       return { file, written: false };
     }
+    // Sin cambios reales no se toca el archivo: reescribirlo dispara la recarga del
+    // vigilante del host y provoca churn (OpenCode puede recargar y perder el estado).
+    if (merged === raw) return { file, written: false };
+    backupConfig(file);
     writeAtomic(file, merged);
     return { file, written: true };
   }
+
+  backupConfig(file);
 
   const cfg = { ...parsed };
   for (const m of mutations) m.value(cfg);
@@ -931,18 +1080,32 @@ export function autoConfigureGlobal(options = {}) {
   const nodePath = options.nodePath || getNodePath();
   const configured = [];
   const failures = [];
-  const pluginCode = buildOpenCodePluginSource(binPath, nodePath);
+  let pluginCode = '';
+  try {
+    pluginCode = buildOpenCodePluginSource(binPath, nodePath);
+    const check = validateOpenCodePluginSource(pluginCode);
+    if (!check.ok) {
+      throw new Error(`Plugin OpenCode invalido (${check.problems.join(', ')}); no se escribio.`);
+    }
+  } catch (err) {
+    // Sin plugin valido no se escribe nada (un default export roto hace que OpenCode descarte
+    // el plugin y pierda los agentes custom); la config MCP/permisos global sigue aplicandose.
+    failures.push(reportConfigError('CONFIG_PLUGIN_INVALID', 'autoConfigureGlobal', err.message));
+    pluginCode = '';
+  }
 
   // 1. OpenCode global plugin y config
   const opencodeGlobalDir = path.join(homeDir, '.config', 'opencode');
   if (fs.existsSync(opencodeGlobalDir) || options.forceGlobal) {
     const pluginPath = path.join(opencodeGlobalDir, 'plugins', 'contextbase-auto.js');
-    try {
-      writeAtomic(pluginPath, pluginCode);
-      configured.push(pluginPath);
-      removeFileIfExists(path.join(opencodeGlobalDir, 'plugin', 'contextbase-auto.js'));
-    } catch (err) {
-      failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
+    if (pluginCode) {
+      try {
+        writeAtomic(pluginPath, pluginCode);
+        configured.push(pluginPath);
+        removeFileIfExists(path.join(opencodeGlobalDir, 'plugin', 'contextbase-auto.js'));
+      } catch (err) {
+        failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
+      }
     }
 
     const target = pickOpenCodeConfigPath(opencodeGlobalDir);
@@ -952,12 +1115,17 @@ export function autoConfigureGlobal(options = {}) {
       [
         {
           value(cfg) {
-            cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
             cfg.plugins = stripContextbasePluginFiles(cfg.plugins);
-            cfg.permission = {
-              ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
-              'contextbase_*': 'allow',
-            };
+            if (!Array.isArray(cfg.permissions)) cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
+            if (Array.isArray(cfg.permissions)) {
+              const already = cfg.permissions.some((p) => p && p.action === 'contextbase_*');
+              if (!already) cfg.permissions = [...cfg.permissions, { action: 'contextbase_*', resource: '*', effect: 'allow' }];
+            } else {
+              cfg.permission = {
+                ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
+                'contextbase_*': 'allow',
+              };
+            }
             if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
             if (cfg.mcp.servers && typeof cfg.mcp.servers === 'object') {
               cfg.mcp.servers.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
@@ -972,13 +1140,28 @@ export function autoConfigureGlobal(options = {}) {
                 out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
               }
             }
-            const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
-            if (existingPerm !== 'allow') {
-              const perm = {
-                ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
-                'contextbase_*': 'allow',
-              };
-              out = setJsoncPath(out, ['permission'], perm);
+            // El esquema v2 usa `permissions` (array de {action,resource,effect}); v1 usaba
+            // `permission` (objeto). Escribir la clave legacy en un config v2 lo invalida y el
+            // host lo descarta (los agentes pierden color y los MCP dejan de cargar).
+            if (Array.isArray(parsed.permissions)) {
+              const already = parsed.permissions.some(
+                (p) => p && p.action === 'contextbase_*' && (p.effect === 'allow' || p.effect === undefined)
+              );
+              if (!already) {
+                out = setJsoncPath(out, ['permissions'], [
+                  ...parsed.permissions,
+                  { action: 'contextbase_*', resource: '*', effect: 'allow' },
+                ]);
+              }
+            } else {
+              const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
+              if (existingPerm !== 'allow') {
+                const perm = {
+                  ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
+                  'contextbase_*': 'allow',
+                };
+                out = setJsoncPath(out, ['permission'], perm);
+              }
             }
             const mcpServers =
               parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers && typeof parsed.mcp.servers === 'object';
@@ -1007,12 +1190,14 @@ export function autoConfigureGlobal(options = {}) {
   const kiloGlobalDir = path.join(homeDir, '.config', 'kilo');
   if (fs.existsSync(kiloGlobalDir) || options.forceGlobal) {
     const pluginPath = path.join(kiloGlobalDir, 'plugins', 'contextbase-auto.js');
-    try {
-      writeAtomic(pluginPath, pluginCode);
-      configured.push(pluginPath);
-      removeFileIfExists(path.join(kiloGlobalDir, 'plugin', 'contextbase-auto.js'));
-    } catch (err) {
-      failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
+    if (pluginCode) {
+      try {
+        writeAtomic(pluginPath, pluginCode);
+        configured.push(pluginPath);
+        removeFileIfExists(path.join(kiloGlobalDir, 'plugin', 'contextbase-auto.js'));
+      } catch (err) {
+        failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
+      }
     }
 
     const target = pickKiloConfigPath(kiloGlobalDir);

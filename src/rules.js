@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export const CONTEXTBASE_VERSION = (() => {
@@ -26,26 +27,36 @@ Este proyecto utiliza un sistema autónomo de memoria técnica persistente y Red
 <!-- CONTEXTBASE:END -->`;
 
 /**
- * Inyecta o actualiza el bloque de reglas de contextbase en un archivo
+ * Inyecta o actualiza el bloque de reglas de contextbase en un archivo.
+ * Devuelve false cuando el contenido en disco ya era identico (no reescribe ni cambia el mtime).
  */
 function injectRuleInFile(filePath) {
-  let content = '';
-  if (fs.existsSync(filePath)) {
-    content = fs.readFileSync(filePath, 'utf8');
-  }
-
   const startTag = '<!-- CONTEXTBASE:START -->';
   const endTag = '<!-- CONTEXTBASE:END -->';
 
-  let updatedContent;
-  if (content.includes(startTag) && content.includes(endTag)) {
-    const regex = new RegExp(`${startTag}[\\s\\S]*?${endTag}`, 'g');
-    updatedContent = content.replace(regex, CONTEXTBASE_RULE_BLOCK);
-  } else if (content.trim().length > 0) {
-    updatedContent = `${content.trim()}\n\n${CONTEXTBASE_RULE_BLOCK}\n`;
-  } else {
-    updatedContent = `${CONTEXTBASE_RULE_BLOCK}\n`;
+  const existed = fs.existsSync(filePath);
+  let content = '';
+  if (existed) {
+    content = fs.readFileSync(filePath, 'utf8');
   }
+
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const block = eol === '\n' ? CONTEXTBASE_RULE_BLOCK : CONTEXTBASE_RULE_BLOCK.replace(/\n/g, eol);
+  const startIdx = content.indexOf(startTag);
+  const endIdx = content.indexOf(endTag);
+
+  let updatedContent;
+  if (startIdx !== -1 && endIdx > startIdx) {
+    updatedContent = content.slice(0, startIdx) + block + content.slice(endIdx + endTag.length);
+  } else if (startIdx !== -1) {
+    // START sin END: se reemplaza desde la marca hasta el final (nunca se duplica el bloque).
+    updatedContent = content.slice(0, startIdx) + block + eol;
+  } else {
+    const trimmed = content.trimEnd();
+    updatedContent = trimmed.length > 0 ? `${trimmed}${eol}${eol}${block}${eol}` : `${block}${eol}`;
+  }
+
+  if (existed && updatedContent === content) return false;
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, updatedContent, 'utf8');
@@ -53,26 +64,37 @@ function injectRuleInFile(filePath) {
 }
 
 /**
+ * El directorio personal no es un proyecto: ahi no se inyectan reglas de agente.
+ */
+function isHomeDirectory(projectDir) {
+  const root = path.resolve(projectDir);
+  const home = path.resolve(os.homedir());
+  return process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home;
+}
+
+/**
  * Inyecta las directivas de ContextBase en todos los agentes comunes
  */
 export function injectAgentRules(projectDir) {
+  const root = path.resolve(projectDir);
+  if (isHomeDirectory(root)) return [];
   const targetFiles = [
-    path.join(projectDir, 'AGENTS.md'),
-    path.join(projectDir, 'CLAUDE.md'),
-    path.join(projectDir, '.cursorrules'),
-    path.join(projectDir, '.windsurfrules')
+    path.join(root, 'AGENTS.md'),
+    path.join(root, 'CLAUDE.md'),
+    path.join(root, '.cursorrules'),
+    path.join(root, '.windsurfrules')
   ];
 
   const optionalDirs = [
-    ['.gemini', path.join(projectDir, '.gemini', 'rules', 'contextbase.md')],
-    ['.agents', path.join(projectDir, '.agents', 'rules', 'contextbase.md')],
-    ['.kilo', path.join(projectDir, '.kilo', 'rules', 'contextbase.md')],
-    ['.kilocode', path.join(projectDir, '.kilocode', 'rules', 'contextbase.md')],
-    ['.opencode', path.join(projectDir, '.opencode', 'rules', 'contextbase.md')]
+    ['.gemini', path.join(root, '.gemini', 'rules', 'contextbase.md')],
+    ['.agents', path.join(root, '.agents', 'rules', 'contextbase.md')],
+    ['.kilo', path.join(root, '.kilo', 'rules', 'contextbase.md')],
+    ['.kilocode', path.join(root, '.kilocode', 'rules', 'contextbase.md')],
+    ['.opencode', path.join(root, '.opencode', 'rules', 'contextbase.md')]
   ];
 
   for (const [dirName, rulePath] of optionalDirs) {
-    if (fs.existsSync(path.join(projectDir, dirName))) {
+    if (fs.existsSync(path.join(root, dirName))) {
       targetFiles.push(rulePath);
     }
   }
@@ -84,7 +106,7 @@ export function injectAgentRules(projectDir) {
       // sin crearlo la inyeccion fallaba en silencio y el guardia reportaba deriva.
       fs.mkdirSync(path.dirname(file), { recursive: true });
       injectRuleInFile(file);
-      injected.push(path.relative(projectDir, file).replace(/\\/g, '/'));
+      injected.push(path.relative(root, file).replace(/\\/g, '/'));
     } catch {}
   }
 

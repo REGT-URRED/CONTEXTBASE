@@ -4,6 +4,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { writeAtomic } from './fsutil.js';
 
 export const EGM_PERSONAS = [
   {
@@ -105,6 +107,11 @@ export const EGM_PERSONAS = [
     modo: 'REVIEW',
     artefacto: 'contrato por directorio y README de entrada',
     criterio_pass: 'Cada directorio declara su contrato y el README permite arrancar sin leer el codigo.',
+    // Su criterio exige juzgar el contrato de un directorio y su README de arranque: no hay regla
+    // determinista que lo evalue sin inventar hallazgos. Se declara no automatizable en vez de fingir
+    // que corre: el modelo lo reporta como "manual" y nunca lo cuenta como revisor ejecutado.
+    automatizable: false,
+    motivo_no_automatico: 'Requiere juicio humano sobre el contrato del directorio y el README de arranque; no tiene checker determinista.',
   },
 ];
 
@@ -293,9 +300,11 @@ const EVIDENCIA = /\d|%|benchmark|prueba|test|mide|medici[oó]n|medido|medicion/
 const ACRONIMOS = new Set(['API', 'URL', 'URI', 'HTTP', 'HTTPS', 'JSON', 'YAML', 'CLI', 'ID', 'OK', 'OS', 'DB', 'SQL', 'CSS', 'HTML', 'JS', 'TS', 'MCP', 'LLM', 'AI', 'UI', 'UX', 'CI', 'CD', 'IO', 'PR', 'RPC', 'TCP', 'UDP', 'GDPR', 'SLA', 'SLO', 'UUID', 'SHA', 'MD', 'PDF', 'CSV', 'TXT', 'XML', 'QA', 'EGM', 'H1', 'H2', 'H3']);
 
 const CODE_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|ps1|css|scss|less|html|vue|svelte)$/i;
-const PATH_RE = /(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/g;
+// Acepta separador posix y Windows: un doc escrito en Windows cita rutas con barra invertida
+// y tambien debe verificarse contra el disco.
+const PATH_RE = /(?:[A-Za-z0-9_.-]+[\/\\])+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/g;
 // Copia sin flag global: RegExp con /g es stateful y .test() avanza lastIndex.
-const PATH_ANY = /(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/;
+const PATH_ANY = /(?:[A-Za-z0-9_.-]+[\/\\])+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/;
 const CREATION = /\b(create|creating|modify|modifying|delete|deleting|new|nuevo|nueva|crear|creara|creará|creacion|creación|agregar|agrega|anadir|añadir|pendiente|renombrar|eliminar|to\s+create)\b/i;
 const DECISION = /\b(TODO|TBD|FIXME|XXX)\b|por\s+definir|por\s+decidir|a\s+definir/i;
 const VAGUE = /\b(el|este|ese)\s+(sistema|c[oó]digo|proyecto|m[oó]dulo|servicio)\b/i;
@@ -323,6 +332,20 @@ function snippet(text, max = 160) {
 
 function stripUrls(text) {
   return String(text || '').replace(/https?:\/\/\S+/gi, ' ');
+}
+
+// Normaliza una ruta citada en un doc: quita puntuacion final y unifica el separador a '/'.
+// Sin esto, una referencia escrita con separador de Windows nunca se resolveria contra el disco.
+function cleanRef(raw) {
+  return String(raw || '').replace(/[.,;:)]+$/, '').replace(/\\/g, '/');
+}
+
+// Extensiones plausibles para una ruta citada. Sin este filtro, un literal de regex como
+// /prueba|test/i.test se lee como ruta ("hito/i.test") y produce blockers inventados en un objetivo de codigo.
+const REF_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|bash|zsh|ps1|psm1|bat|cmd|css|scss|sass|less|html|htm|vue|svelte|md|markdown|mdx|json|jsonc|json5|yml|yaml|toml|ini|cfg|conf|env|txt|csv|tsv|sql|proto|graphql|gql|wasm|svg|png|jpe?g|gif|ico|webp|pdf|zip|tar|gz|lock|log)$/i;
+
+function refsIn(text) {
+  return (stripUrls(text).match(PATH_RE) || []).map(cleanRef).filter(r => r && REF_EXT.test(r));
 }
 
 function walk(dir) {
@@ -453,8 +476,19 @@ function buildContext(root, read) {
 
 // ---------- checkers deterministas ----------
 
+// "skipped" = el criterio no aplica a este tipo de objetivo (no es un fallo de ejecucion).
+// "not run" queda reservado para el revisor que existia y no pudo correr (error de lectura, excepcion).
+function skipped(persona, motivo) {
+  return {
+    persona,
+    status: 'skipped',
+    findings: [],
+    motivo: motivo || 'El criterio solo aplica a documentos Markdown y el objetivo no lo es.',
+  };
+}
+
 function checkStructural(ctx) {
-  if (!ctx.isMd) return { persona: 'egm-structural', status: 'not run', findings: [] };
+  if (!ctx.isMd) return skipped('egm-structural');
   const out = [];
   const hs = ctx.headings;
   const h1 = hs.filter(h => h.level === 1);
@@ -510,7 +544,7 @@ function tableProblems(lines) {
 }
 
 function checkStyle(ctx) {
-  if (!ctx.isMd) return { persona: 'egm-style', status: 'not run', findings: [] };
+  if (!ctx.isMd) return skipped('egm-style');
   const out = [];
   for (const l of ctx.prose) {
     const plain = l.text;
@@ -554,7 +588,7 @@ function checkStyle(ctx) {
 }
 
 function checkComprehension(ctx) {
-  if (!ctx.isMd) return { persona: 'egm-comprehension', status: 'not run', findings: [] };
+  if (!ctx.isMd) return skipped('egm-comprehension');
   const out = [];
   const terms = new Map();
   for (const l of ctx.lines) {
@@ -597,7 +631,7 @@ function checkComprehension(ctx) {
 }
 
 function checkImplementationReadiness(ctx) {
-  if (!ctx.isMd) return { persona: 'egm-implementation-readiness', status: 'not run', findings: [] };
+  if (!ctx.isMd) return skipped('egm-implementation-readiness');
   const out = [];
   for (const l of ctx.lines) {
     if (l.code) continue;
@@ -633,7 +667,7 @@ function checkImplementationReadiness(ctx) {
 }
 
 function checkDesign(ctx) {
-  if (!ctx.isMd) return { persona: 'egm-design', status: 'not run', findings: [] };
+  if (!ctx.isMd) return skipped('egm-design');
   const out = [];
   if (ctx.headings.length < 3) return { persona: 'egm-design', status: 'completed', findings: out };
   if (!ctx.headings.some(h => /alternativ/i.test(h.title))) {
@@ -654,10 +688,7 @@ function checkCodebaseDetails(ctx) {
   const occ = new Map();
   for (const l of ctx.lines) {
     if (l.code) continue;
-    const clean = stripUrls(l.text);
-    const matches = clean.match(PATH_RE) || [];
-    for (const raw of matches) {
-      const ref = raw.replace(/[.,;:)]+$/, '');
+    for (const ref of refsIn(l.text)) {
       if (!occ.has(ref)) occ.set(ref, []);
       occ.get(ref).push({ n: l.n, text: l.text, creation: CREATION.test(l.text) });
     }
@@ -665,7 +696,10 @@ function checkCodebaseDetails(ctx) {
   for (const [ref, list] of occ) {
     if (ref.endsWith('/')) continue;
     if (list.every(o => o.creation)) continue;
+    // Se resuelve contra la raiz del proyecto y tambien contra el directorio del objetivo:
+    // un import relativo al propio archivo es correcto aunque no exista en la raiz.
     if (fs.existsSync(path.join(ctx.root, ref))) continue;
+    if (fs.existsSync(path.join(path.dirname(ctx.file), ref))) continue;
     const first = list.find(o => !o.creation);
     out.push(mk('egm-codebase-details', 'blocker', 'referencias', 'ref:' + ref,
       'El documento da por existente "' + ref + '" pero ese archivo no existe en el proyecto.',
@@ -768,23 +802,40 @@ const CHECKERS = [
 
 function countBy(findings) {
   const c = { blocker: 0, major: 0, nit: 0 };
-  for (const f of findings) if (c[f.severity] !== undefined) c[f.severity]++;
+  for (const f of findings) if (f && c[f.severity] !== undefined) c[f.severity]++;
   return c;
 }
 
 function dedupeById(findings) {
   const seen = new Map();
   for (const f of findings) {
+    if (!f || !f.id) continue;
     if (!seen.has(f.id)) seen.set(f.id, f);
   }
   return [...seen.values()];
 }
+
+// Orden de severidad: se usa el export EGM_SEVERIDAD_ORDEN (blocker -> major -> nit)
+// para que el resultado y el reporte presenten primero lo que bloquea.
+function severityRank(severity) {
+  const i = EGM_SEVERIDAD_ORDEN.indexOf(severity);
+  return i === -1 ? EGM_SEVERIDAD_ORDEN.length : i;
+}
+
+function orderBySeverity(findings) {
+  return findings.slice().sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+}
+
+// Estados que significan "no pudo ejecutarse", unico motivo valido para RERUN.
+// "skipped" (el criterio no aplica) y "manual" (persona sin checker) no son fallos de ejecucion.
+const NOT_EXECUTED = new Set(['not run', 'error']);
 
 function summaryOf(findings, reviewers) {
   const c = countBy(findings);
   const open = findings.filter(f => f.status === 'open');
   const oc = countBy(open);
   const dims = [...new Set(findings.map(f => f.dimension))].sort();
+  const failed = reviewers.filter(r => NOT_EXECUTED.has(r.status)).length;
   return {
     total: findings.length,
     blocker: c.blocker,
@@ -794,6 +845,10 @@ function summaryOf(findings, reviewers) {
     revisores: {
       total: reviewers.length,
       completed: reviewers.filter(r => r.status === 'completed').length,
+      skipped: reviewers.filter(r => r.status === 'skipped').length,
+      manual: reviewers.filter(r => r.status === 'manual').length,
+      failed,
+      // Compatibilidad: "no completaron", cualquiera sea el motivo.
       notRun: reviewers.filter(r => r.status !== 'completed').length,
     },
     dimensiones: dims,
@@ -803,7 +858,7 @@ function summaryOf(findings, reviewers) {
 function detectChurn(current, previous) {
   const fixed = new Set();
   for (const p of previous || []) {
-    if (p.status !== 'fixed') continue;
+    if (!p || p.status !== 'fixed') continue;
     if (p.scope) fixed.add(p.scope);
     if (p.id) fixed.add(p.id);
   }
@@ -814,6 +869,105 @@ function detectChurn(current, previous) {
     }
   }
   return null;
+}
+
+// ---------- comparacion contra base (git, solo built-ins) ----------
+
+function git(root, args) {
+  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  return {
+    ok: !r.error && r.status === 0,
+    out: String(r.stdout || '').trim(),
+    err: String(r.stderr || '').trim(),
+  };
+}
+
+function parseNumstat(out) {
+  const files = [];
+  for (const line of String(out || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    files.push({
+      file: parts.slice(2).join('\t'),
+      // "-" es un archivo binario: git no cuenta lineas.
+      added: parts[0] === '-' ? null : Number(parts[0]),
+      deleted: parts[1] === '-' ? null : Number(parts[1]),
+    });
+  }
+  return files;
+}
+
+// Compara de verdad contra la base citada: sin esto el flag --base solo se imprimia.
+// Devuelve siempre un objeto { ref, ok, files, target, message } para que el reporte
+// pueda distinguir "no hay diff" de "no se pudo comparar".
+function compareAgainstBase(root, base, targetRel) {
+  if (!base) return null;
+  const info = { ref: String(base), ok: false, files: [], target: null, message: '' };
+
+  const inside = git(root, ['rev-parse', '--is-inside-work-tree']);
+  if (!inside.ok || inside.out !== 'true') {
+    info.message = 'No se pudo comparar contra "' + info.ref + '": "' + root + '" no es un repositorio git o git no esta disponible.';
+    return info;
+  }
+  if (!git(root, ['rev-parse', '--verify', '--quiet', info.ref + '^{commit}']).ok) {
+    info.message = 'La referencia base "' + info.ref + '" no existe en este repositorio: no hay comparacion posible.';
+    return info;
+  }
+  if (!git(root, ['ls-files', '--error-unmatch', '--', targetRel]).ok) {
+    info.message = 'El objetivo "' + targetRel + '" no esta versionado en git: no hay diff contra "' + info.ref + '".';
+    return info;
+  }
+
+  const diff = git(root, ['-c', 'core.quotepath=false', 'diff', '--numstat', info.ref]);
+  if (!diff.ok) {
+    info.message = 'git diff contra "' + info.ref + '" fallo: ' + (diff.err || 'sin detalle').split(/\r?\n/)[0];
+    return info;
+  }
+
+  info.ok = true;
+  info.files = parseNumstat(diff.out);
+  const changed = info.files.find(f => f.file === targetRel) || null;
+  info.target = {
+    file: targetRel,
+    added: changed ? changed.added : 0,
+    deleted: changed ? changed.deleted : 0,
+    changed: Boolean(changed),
+  };
+  info.message = info.files.length
+    ? info.files.length + ' archivo(s) cambiaron respecto de "' + info.ref + '".'
+    : 'Sin cambios respecto de "' + info.ref + '".';
+  return info;
+}
+
+// ---------- una ronda de revision ----------
+
+function runReviewers(ctx) {
+  const reviewers = [];
+  const raw = [];
+  for (const checker of CHECKERS) {
+    const r = checker(ctx);
+    const entry = { persona: r.persona, status: r.status, findings: r.findings.length };
+    if (r.motivo) entry.motivo = r.motivo;
+    reviewers.push(entry);
+    raw.push(...r.findings.filter(Boolean));
+  }
+  // Personas sin checker determinista: se listan como "manual" para que la lista de
+  // revisores refleje exactamente quien corrio y no oculte la brecha.
+  for (const p of EGM_PERSONAS) {
+    if (p.automatizable !== false) continue;
+    reviewers.push({ persona: p.id, status: 'manual', findings: 0, motivo: p.motivo_no_automatico });
+  }
+  // El sintetizador no genera hallazgos: deduplica y consolida lo que los revisores produjeron.
+  const findings = dedupeById(raw);
+  reviewers.push({ persona: 'egm-synthesizer', status: 'completed', findings: 0, consolidated: findings.length });
+  return { reviewers, findings };
+}
+
+function roundIsClean(findings, reviewers) {
+  const c = countBy(findings);
+  if (c.blocker > 0 || c.major > 0) return false;
+  return !reviewers.some(r => NOT_EXECUTED.has(r.status));
 }
 
 export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previous } = {}) {
@@ -830,27 +984,37 @@ export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previ
       reason: read.reason,
       reviewers: [],
       base: base || null,
+      baseDiff: null,
       maxRounds,
+      convergence: null,
     };
     result.report = egmReport(result);
     return result;
   }
 
   const ctx = buildContext(root, read);
-  const reviewers = [];
-  const raw = [];
-  for (const checker of CHECKERS) {
-    const r = checker(ctx);
-    reviewers.push({ persona: r.persona, status: r.status, findings: r.findings.length });
-    raw.push(...r.findings);
-  }
-  // El sintetizador no genera hallazgos: deduplica y consolida lo que los revisores produjeron.
-  const findings = dedupeById(raw);
-  reviewers.push({ persona: 'egm-synthesizer', status: 'completed', findings: 0, consolidated: findings.length });
 
+  // Varias rondas sobre el mismo archivo: el contenido no cambia dentro de la llamada,
+  // asi que cada ronda extra solo confirma estabilidad. Si la firma de hallazgos se repite,
+  // seguir leyendo no aporta evidencia y se corta antes del cap.
+  const cap = Math.max(1, Math.floor(Number(maxRounds)) || 1);
+  const roundsData = [];
+  let signature = null;
+  for (let i = 0; i < cap; i++) {
+    const round = runReviewers(ctx);
+    const next = round.findings.map(f => f.id + ':' + f.status).sort().join('|');
+    roundsData.push(round);
+    if (signature !== null && next === signature) break;
+    signature = next;
+  }
+
+  const last = roundsData[roundsData.length - 1];
+  const findings = orderBySeverity(last.findings);
+  const reviewers = last.reviewers;
   const counts = countBy(findings);
-  const notRun = reviewers.filter(r => r.status !== 'completed');
+  const failed = reviewers.filter(r => NOT_EXECUTED.has(r.status));
   const churn = detectChurn(findings, previous);
+  const convergence = egmConvergence({ findingsByRound: roundsData, maxRounds: cap });
 
   let verdict;
   let reason;
@@ -860,20 +1024,23 @@ export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previ
   } else if (churn) {
     verdict = 'RERUN';
     reason = 'Churn: el hallazgo ' + churn.id + ' reaparece en el scope ' + churn.scope + ' despues de un fix.';
-  } else if (notRun.length) {
+  } else if (failed.length) {
     verdict = 'RERUN';
-    reason = 'Revisores sin ejecutar: ' + notRun.map(r => r.persona).join(', ') + '.';
+    reason = 'Revisores sin ejecutar: ' + failed.map(r => r.persona).join(', ') + '.';
   } else if (counts.major > 0) {
     verdict = 'REFIX';
     reason = counts.major + ' major(s) pendientes contra el estandar aplicado.';
+  } else if (convergence.converged) {
+    verdict = 'PASS';
+    reason = 'Sin blockers ni majors; ' + convergence.cleanRounds + ' ronda(s) limpias consecutivas en ' + roundsData.length + ' ronda(s).';
   } else {
     verdict = 'PASS';
-    reason = 'Sin blockers ni majors y todos los revisores completaron.';
+    reason = 'Sin blockers ni majors y todos los revisores aplicables completaron.';
   }
 
   const result = {
     target: read.rel || String(target || ''),
-    rounds: 1,
+    rounds: roundsData.length,
     findings,
     summary: summaryOf(findings, reviewers),
     verdict,
@@ -881,7 +1048,13 @@ export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previ
     reason,
     reviewers,
     base: base || null,
+    baseDiff: compareAgainstBase(root, base, read.rel || String(target || '')),
     maxRounds,
+    convergence: {
+      converged: convergence.converged,
+      cleanRounds: convergence.cleanRounds,
+      escalation: convergence.escalation,
+    },
   };
   result.report = egmReport(result);
   return result;
@@ -890,9 +1063,10 @@ export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previ
 // ---------- motor de convergencia ----------
 
 function normalizeRound(round) {
-  if (Array.isArray(round)) return { findings: round, reviewers: [] };
-  const findings = Array.isArray(round && round.findings) ? round.findings : [];
-  const reviewers = Array.isArray(round && round.reviewers) ? round.reviewers : [];
+  // Los elementos nulos se descartan antes de mapear: una ronda con un hueco no debe tumbar el motor.
+  if (Array.isArray(round)) return { findings: round.filter(Boolean), reviewers: [] };
+  const findings = Array.isArray(round && round.findings) ? round.findings.filter(Boolean) : [];
+  const reviewers = Array.isArray(round && round.reviewers) ? round.reviewers.filter(Boolean) : [];
   return { findings, reviewers };
 }
 
@@ -905,6 +1079,8 @@ export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } =
   const cap = Math.max(1, Number(maxRounds) || EGM_MAX_RONDAS);
   const statusById = new Map();
   const statusByScope = new Map();
+  const resolutionById = new Map();
+  const resolutionByScope = new Map();
   const fixedIds = new Set();
   const fixedScopes = new Set();
   let churn = false;
@@ -919,8 +1095,12 @@ export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } =
     const round = normalizeRound(raw);
     const resolved = round.findings.map(f => {
       const prev = statusById.get(f.id) || statusByScope.get(scopeKey(f));
-      if (prev === 'settled') return Object.assign({}, f, { status: 'settled' });
-      return f;
+      if (prev !== 'settled') return f;
+      // Una resolucion con reabre=true (propose_fix) autoriza que el hallazgo vuelva a abrirse.
+      const prevResolution = resolutionById.get(f.id) || resolutionByScope.get(scopeKey(f));
+      const def = prevResolution ? EGM_RESOLUCIONES[prevResolution] : null;
+      if (def && def.reabre) return Object.assign({}, f, { status: 'open', reabierto: true });
+      return Object.assign({}, f, { status: 'settled' });
     });
     for (const f of resolved) {
       if (f.status === 'fixed' || f.status === 'settled') continue;
@@ -932,6 +1112,10 @@ export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } =
     for (const f of resolved) {
       statusById.set(f.id, f.status);
       statusByScope.set(scopeKey(f), f.status);
+      if (f.resolution) {
+        resolutionById.set(f.id, f.resolution);
+        resolutionByScope.set(scopeKey(f), f.resolution);
+      }
       if (f.status === 'fixed') {
         fixedIds.add(f.id);
         fixedScopes.add(scopeKey(f));
@@ -942,7 +1126,8 @@ export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } =
     const majors = open.filter(f => f.severity === 'major').length;
     openBlockers = Math.max(openBlockers, blockers);
     openMajors = Math.max(openMajors, majors);
-    const reviewersOk = round.reviewers.every(rv => rv.status === 'completed');
+    // "skipped" y "manual" no son fallos de ejecucion: no impiden una ronda limpia.
+    const reviewersOk = !round.reviewers.some(rv => NOT_EXECUTED.has(rv.status));
     const clean = blockers === 0 && majors === 0 && reviewersOk;
     if (clean) { cleanStreak++; cleanRounds = cleanStreak; } else cleanStreak = 0;
     detalle.push({ findings: resolved, clean, blockers, majors });
@@ -1014,6 +1199,29 @@ function driftIncompleteModel(ctx, codeRefs) {
   return out;
 }
 
+// Valores que se repiten pero no son valores de negocio hardcodeados: codificaciones,
+// formatos y literales estructurales. Un operador como ") + " nunca es drift.
+const VALOR_NO_NEGOCIO = new Set([
+  'utf8', 'utf-8', 'utf16', 'latin1', 'ascii', 'base64', 'hex', 'binary',
+  'json', 'text', 'plain', 'html', 'xml', 'yaml', 'string', 'number', 'boolean',
+  'object', 'array', 'undefined', 'null', 'true', 'false',
+]);
+
+// Un valor de negocio hardcodeado es un identificador legible, no un fragmento de sintaxis.
+function isBusinessValue(value) {
+  if (typeof value !== 'string') return false;
+  if (value.length < 3 || value.length > 40) return false;
+  if (!/[A-Za-z]/.test(value)) return false;
+  if (!/^[A-Za-z][A-Za-z0-9_.:@/-]*$/.test(value)) return false;
+  return !VALOR_NO_NEGOCIO.has(value.toLowerCase());
+}
+
+// Numero magico repetido: 3+ digitos y no un ano calendario.
+function isMagicNumber(value) {
+  if (!/^\d{3,}$/.test(value)) return false;
+  return !/^(19|20)\d{2}$/.test(value);
+}
+
 function driftLogicShortcut(ctx, codeRefs) {
   const out = [];
   if (!/din[aá]mic|configurab|por\s+par[aá]metro|variable/i.test(ctx.text)) return out;
@@ -1024,9 +1232,11 @@ function driftLogicShortcut(ctx, codeRefs) {
     const counts = new Map();
     for (const m of code.matchAll(/(['"])([^'"\n]{3,})\1/g)) {
       const key = m[2];
+      if (!isBusinessValue(key)) continue;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     for (const m of code.matchAll(/\b(\d{3,})\b/g)) {
+      if (!isMagicNumber(m[1])) continue;
       counts.set(m[1], (counts.get(m[1]) || 0) + 1);
     }
     for (const [value, n] of counts) {
@@ -1069,20 +1279,29 @@ export function egmDrift({ cwd, docsDir } = {}) {
   const root = path.resolve(cwd || process.cwd());
   const docs = path.resolve(root, String(docsDir || 'docs'));
   const drift = [];
-  if (!fs.existsSync(docs)) return { drift: [], message: 'No drift detected' };
+  // Un directorio inexistente NO es "sin drift": es un escaneo que nunca ocurrio.
+  if (!fs.existsSync(docs)) {
+    return {
+      drift: [],
+      docsDir: docs,
+      missingDocs: true,
+      scanned: 0,
+      message: 'El directorio de documentacion no existe: ' + docs + '. No se escaneo ningun archivo.',
+    };
+  }
 
+  let scanned = 0;
   for (const file of walk(docs)) {
     if (!/\.md$/i.test(file)) continue;
     let text = '';
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    scanned++;
     const ctx = buildContext(root, { file, text, rel: path.relative(root, file).replace(/\\/g, '/') });
     const refs = [];
     const seen = new Set();
     for (const l of ctx.lines) {
       if (l.code) continue;
-      const clean = stripUrls(l.text);
-      for (const raw of clean.match(PATH_RE) || []) {
-        const ref = raw.replace(/[.,;:)]+$/, '');
+      for (const ref of refsIn(l.text)) {
         if (seen.has(ref)) continue;
         seen.add(ref);
         refs.push({ ref, creation: CREATION.test(l.text), n: l.n, text: l.text });
@@ -1104,8 +1323,8 @@ export function egmDrift({ cwd, docsDir } = {}) {
     drift.push(...driftArchitecturalDivergence(ctx, root));
   }
 
-  if (!drift.length) return { drift: [], message: 'No drift detected' };
-  return { drift, message: drift.length + ' diferencia(s) doc-codigo detectada(s).' };
+  if (!drift.length) return { drift: [], docsDir: docs, missingDocs: false, scanned, message: 'No drift detected' };
+  return { drift, docsDir: docs, missingDocs: false, scanned, message: drift.length + ' diferencia(s) doc-codigo detectada(s).' };
 }
 
 // ---------- reporte ----------
@@ -1137,7 +1356,8 @@ export function egmReport(result) {
   else {
     L.push('| id | persona | severidad | scope | detalle |');
     L.push('| --- | --- | --- | --- | --- |');
-    for (const f of r.findings) {
+    // Mismo orden que el resultado: primero lo que bloquea.
+    for (const f of orderBySeverity(r.findings)) {
       L.push('| ' + f.id + ' | ' + f.persona + ' | ' + f.severity + ' | ' + escapeCell(f.scope) + ' | ' + escapeCell(f.detail) + ' |');
     }
   }
@@ -1145,9 +1365,150 @@ export function egmReport(result) {
   L.push('## Revisores');
   L.push('| persona | estado |');
   L.push('| --- | --- |');
-  for (const rv of r.reviewers || []) L.push('| ' + rv.persona + ' | ' + rv.status + ' |');
+  for (const rv of r.reviewers || []) {
+    const nota = rv.motivo ? ' (' + escapeCell(rv.motivo) + ')' : '';
+    L.push('| ' + rv.persona + ' | ' + rv.status + nota + ' |');
+  }
+  if (r.baseDiff) {
+    L.push('');
+    L.push('## Comparacion con base');
+    L.push('Base: ' + r.baseDiff.ref);
+    if (!r.baseDiff.ok) {
+      L.push('No comparable: ' + r.baseDiff.message);
+    } else {
+      L.push(r.baseDiff.message);
+      for (const f of r.baseDiff.files || []) {
+        L.push('- ' + f.file + ' (+' + (f.added === null ? 'bin' : f.added) + ' / -' + (f.deleted === null ? 'bin' : f.deleted) + ')');
+      }
+      if (r.baseDiff.target) {
+        L.push('Objetivo: ' + r.baseDiff.target.file + ' ' + (r.baseDiff.target.changed ? 'cambio respecto de la base.' : 'sin cambios respecto de la base.'));
+      }
+    }
+  }
   L.push('');
   L.push('## Motivo');
   L.push(r.reason || 'Sin motivo registrado.');
   return L.join('\n');
 }
+
+// ---------- pulso automatico (heartbeat de ContextBase) ----------
+// El motor deja de ser una herramienta que alguien llama a mano: ContextBase lo pulsa
+// en cada latido, revisa el documento vivo del proyecto y deja el veredicto en disco.
+
+const EGM_VERDICTOS = ['PASS', 'REFIX', 'RERUN', 'FAIL'];
+
+function egmPaqueteVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    if (pkg && typeof pkg.version === 'string' && pkg.version) return pkg.version;
+  } catch { /* sin package.json legible: la version queda como 'egm' */ }
+  return 'egm';
+}
+
+function egmPulseTarget(root, explicit) {
+  if (explicit) return path.resolve(root, String(explicit));
+  const candidatos = [
+    path.join(root, 'contextbase', 'fundamentos.md'),
+    path.join(root, 'README.md'),
+  ];
+  for (const file of candidatos) {
+    try {
+      if (fs.statSync(file).isFile()) return file;
+    } catch { /* candidato ausente: se prueba el siguiente */ }
+  }
+  return null;
+}
+
+function egmPulseCounts(findings) {
+  const counts = {};
+  for (const severidad of EGM_SEVERIDAD_ORDEN) counts[severidad] = 0;
+  for (const f of findings || []) {
+    if (!f || !EGM_SEVERIDADES[f.severity]) continue;
+    counts[f.severity]++;
+  }
+  return counts;
+}
+
+/**
+ * Una pasada acotada del modelo EGM sobre el documento vivo del proyecto.
+ * Nunca lanza: si no hay documento, si el objetivo no se puede leer o si algo falla,
+ * devuelve ok:false con el motivo. Persiste el veredicto en contextbase/egm/verdict.json.
+ */
+export function egmPulse(projectDir, options = {}) {
+  const started = Date.now();
+  const opts = options && typeof options === 'object' ? options : {};
+  const payload = {
+    ok: false,
+    verdict: null,
+    target: null,
+    blockers: 0,
+    majors: 0,
+    nits: 0,
+    drift: 0,
+    at: new Date().toISOString(),
+    reason: null,
+    durationMs: 0,
+  };
+
+  const cerrar = extra => Object.assign({}, payload, extra, { durationMs: Date.now() - started });
+
+  try {
+    const root = path.resolve(projectDir || process.cwd());
+    const file = egmPulseTarget(root, opts.target);
+    if (!file) {
+      return cerrar({ ok: false, reason: 'sin-documentacion' });
+    }
+    const rel = path.relative(root, file).replace(/\\/g, '/');
+
+    const rondas = Math.max(1, Math.floor(Number(opts.maxRounds)) || 1);
+    const review = egmReview({ cwd: root, target: rel, maxRounds: rondas });
+    if (!review || review.reviewComplete === false) {
+      // El objetivo existe pero no se pudo leer: la pasada no ocurrio, no hay veredicto.
+      return cerrar({ ok: false, target: rel, reason: 'error' });
+    }
+
+    const counts = egmPulseCounts(review.findings);
+    const verdict = EGM_VERDICTOS.includes(review.verdict) ? review.verdict : 'FAIL';
+
+    // Deriva doc-codigo: solo se cuenta si el escaneo ocurrio de verdad.
+    // Un directorio de docs ausente NO es "sin deriva": queda marcado como no escaneado.
+    const docsDir = opts.docsDir ? String(opts.docsDir) : 'docs';
+    const docsPath = path.resolve(root, docsDir);
+    let drift = 0;
+    let driftMissingDocs = true;
+    if (fs.existsSync(docsPath)) {
+      const scan = egmDrift({ cwd: root, docsDir });
+      drift = Array.isArray(scan && scan.drift) ? scan.drift.length : 0;
+      driftMissingDocs = Boolean(scan && scan.missingDocs);
+    }
+
+    const resultado = cerrar({
+      ok: true,
+      verdict,
+      target: rel,
+      blockers: counts.blocker,
+      majors: counts.major,
+      nits: counts.nit,
+      drift,
+    });
+
+    try {
+      writeAtomic(
+        path.join(root, 'contextbase', 'egm', 'verdict.json'),
+        JSON.stringify(Object.assign({}, resultado, {
+          tool: 'egm',
+          version: egmPaqueteVersion(),
+          driftMissingDocs,
+        }), null, 2) + '\n',
+      );
+    } catch {
+      // El pulso se calculo pero no se pudo registrar: se reporta como fallo, sin lanzar.
+      return Object.assign({}, resultado, { ok: false, reason: 'error' });
+    }
+
+    return resultado;
+  } catch {
+    return cerrar({ ok: false, reason: 'error' });
+  }
+}
+

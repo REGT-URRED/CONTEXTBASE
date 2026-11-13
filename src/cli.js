@@ -17,7 +17,7 @@ import * as review from './review.js';
 import * as redundancy from './redundancy.js';
 import * as slop from './slop.js';
 import * as exp from './export.js';
-import { autoEnsure, refreshStrands } from './auto.js';
+import { autoEnsure, refreshStrands, isHomeDirectory } from './auto.js';
 import { prepareStrandsContext } from './strands.js';
 import { autoConfigureProject, autoConfigureGlobal, reportConfigError } from './autoconfig.js';
 import { startWatcher, startDaemonWatcher, stopDaemonWatcher, statusDaemonWatcher, syncWorkspaceChanges } from './watcher.js';
@@ -49,6 +49,16 @@ function banner() {
 
 export function readOwnVersion() {
   try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; }
+}
+
+/**
+ * El directorio personal no es un proyecto: nada se escribe ahi (ni contextbase/
+ * ni AGENTS.md/CLAUDE.md/reglas). El comando termina igual, con aviso y exit 0.
+ */
+function skipHomeDir(targetDir, silent = false) {
+  if (!isHomeDirectory(targetDir)) return false;
+  if (!silent) console.log(`${c.yellow}Omitido: el directorio personal no es un proyecto.${c.reset}`);
+  return true;
 }
 
 function showHelp() {
@@ -85,6 +95,8 @@ function showHelp() {
   console.log(`  ${c.cyan}snapshot${c.reset}             Crea punto de restauracion de archivos base.`);
   console.log(`  ${c.cyan}restore${c.reset} [id]         Restaura archivos base desde snapshot.`);
   console.log(`  ${c.cyan}tools${c.reset} list|enable|disable  Gestiona herramientas del registro.`);
+  console.log(`  ${c.cyan}egm${c.reset} review|drift|personas|standards|skills  Modelo Elephant-Goldfish: revisión, deriva doc-código y catálogo.`);
+  console.log(`  ${c.cyan}sandbox${c.reset} run|list|apply|rm    Ejecuta operaciones delicadas sobre una copia aislada (contingencia).`);
   console.log(`  ${c.cyan}mission${c.reset}             Prompt de mision: orquestacion, ejecucion resiliente y testing.`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
@@ -96,6 +108,7 @@ function showHelp() {
  * Comando: contextbase init
  */
 export async function runInit(targetDir = process.cwd(), options = {}) {
+  if (skipHomeDir(targetDir)) return;
   banner();
   console.log(`${c.bold}Iniciando implementación secuencial de ContextBase en:${c.reset} ${c.dim}${targetDir}${c.reset}\n`);
 
@@ -281,6 +294,7 @@ export function runStatus(targetDir = process.cwd(), options = {}) {
  * Comando: contextbase task
  */
 export function runTask(action, taskText, targetDir = process.cwd(), scope = null) {
+  if (skipHomeDir(targetDir)) return;
   const baseDir = scope ? path.join(targetDir, 'contextbase', sanitizeScope(scope)) : path.join(targetDir, 'contextbase');
   if (scope) fs.mkdirSync(baseDir, { recursive: true });
   const tasklistPath = path.join(baseDir, 'tasklist.md');
@@ -373,6 +387,7 @@ function deriveScope(cwd) {
 function sanitizeScope(s) { return String(s || '').trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'default'; }
 
 export function runLog(logMessage, targetDir = process.cwd(), scope = null) {
+  if (skipHomeDir(targetDir)) return;
   if (!logMessage) {
     console.log(`${c.yellow}Uso: contextbase log "<mensaje del cambio realizado>"${c.reset}`);
     process.exitCode = 2;
@@ -449,6 +464,7 @@ export function runPack(outputFile, targetDir = process.cwd()) {
  * Si no existe o le falta algún archivo, lo inicializa automáticamente.
  */
 export async function ensureContextBase(targetDir = process.cwd(), silent = false) {
+  if (skipHomeDir(targetDir, silent)) return false;
   const contextDir = path.join(targetDir, 'contextbase');
   const fundamentos = path.join(contextDir, 'fundamentos.md');
   const changelog = path.join(contextDir, 'changelog.md');
@@ -510,6 +526,12 @@ export async function cli(args = process.argv.slice(2)) {
     const globalOnly = args.includes('--global');
     const isJson = args.includes('--json');
 
+    // Plan de contingencia: con --sandbox nada se escribe en el proyecto real.
+    if (args.includes('--sandbox')) {
+      await runExtra('sandbox', ['sandbox', 'auto', ...args.slice(1).filter((a) => a !== '--sandbox')], process.cwd());
+      return;
+    }
+
     const autoFailures = [];
     let globalFiles = [];
     try {
@@ -559,6 +581,7 @@ export async function cli(args = process.argv.slice(2)) {
   if (command === 'watch' || command === 'daemon') {
     await ensureContextBase(process.cwd(), true);
     const sub = args[1] || (args.includes('--foreground') ? 'foreground' : 'start');
+    if ((sub === 'start' || sub === 'foreground') && skipHomeDir(process.cwd())) return;
     if (sub === 'stop') {
       const r = stopDaemonWatcher(process.cwd());
       console.log(r.stopped ? `${c.green}✓ Watcher detenido (PID ${r.pid}).${c.reset}` : `${c.gray}No había watcher en ejecución.${c.reset}`);
@@ -589,6 +612,11 @@ export async function cli(args = process.argv.slice(2)) {
   if (command === 'init') {
     const force = args.includes('--force');
     const pack = args.includes('--pack');
+    // Plan de contingencia: con --sandbox la inicializacion corre sobre una copia aislada.
+    if (args.includes('--sandbox')) {
+      await runExtra('sandbox', ['sandbox', 'init', ...args.slice(1).filter((a) => a !== '--sandbox')], process.cwd());
+      return;
+    }
     await runInit(process.cwd(), { force, pack });
     return;
   }
@@ -605,6 +633,7 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'sync') {
+    if (skipHomeDir(process.cwd())) return;
     await ensureContextBase(process.cwd());
     banner();
     const analysis = analyzeProject(process.cwd());
@@ -627,6 +656,8 @@ export async function cli(args = process.argv.slice(2)) {
   if (command === 'hook') {
     const result = installGitHook(process.cwd(), args[1] || 'install');
     console.log((result.ok ? c.green + '✓ ' : c.red + '✗ ') + result.message + c.reset);
+    // Fuera de un repo Git (o con un hook ajeno) es un fallo real, no un error de uso.
+    if (!result.ok) process.exitCode = 1;
     return;
   }
 
@@ -746,6 +777,7 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'audit') {
+    if (skipHomeDir(process.cwd())) return;
     await ensureContextBase(process.cwd());
     banner();
     console.log(`${c.magenta}[Mantenimiento] Inventario de componentes + verificación de brechas de seguridad...${c.reset}`);
@@ -785,8 +817,13 @@ export async function cli(args = process.argv.slice(2)) {
   }
 
   if (command === 'task') {
-    await ensureContextBase(process.cwd());
     const subAction = args[1] || 'list';
+    if (!['add', 'done', 'list'].includes(subAction)) {
+      console.error(`${c.red}Error: subcomando de task no reconocido: ${subAction}${c.reset} (usa: add, done, list)`);
+      process.exitCode = 2;
+      return;
+    }
+    await ensureContextBase(process.cwd());
     const text = args.filter(a => !a.startsWith('--')).slice(2).join(' ');
     const scopeFlag = (args.find(a => a.startsWith('--scope=')) || '').replace('--scope=', '');
     const autoScope = args.includes('--worktree') || args.includes('--auto-scope');

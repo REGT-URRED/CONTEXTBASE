@@ -366,3 +366,209 @@ test('egmReport: el reporte lista veredicto, hallazgos y revisores', () => {
   assert.ok(out.includes('egm-synthesizer'));
   drop(dir);
 });
+
+// ---------- regresiones P0/P1/P2 ----------
+
+test('convergencia: un hallazgo nulo se descarta en vez de romper la ronda', () => {
+  const valido = {
+    id: 'egm-design-1', persona: 'egm-design', severity: 'major', dimension: 'riesgos',
+    scope: 'section:riesgos', detail: 'falta riesgos', evidence: 'x', resolution: 'propose_fix', status: 'open',
+  };
+  const objeto = {
+    findings: [null, valido],
+    reviewers: [null, { persona: 'egm-design', status: 'completed' }],
+  };
+  const a = egmConvergence({ findingsByRound: [objeto] });
+  assert.equal(a.detalle[0].findings.length, 1);
+  assert.equal(a.detalle[0].findings[0].id, 'egm-design-1');
+  assert.equal(a.detalle[0].majors, 1);
+
+  // Forma de ronda en array plano: mismo contrato de descarte.
+  const b = egmConvergence({ findingsByRound: [[null, valido]] });
+  assert.equal(b.detalle[0].findings.length, 1);
+  assert.equal(b.detalle[0].majors, 1);
+});
+
+test('egmDrift: docs inexistente es missingDocs, docs existente es escaneo real', () => {
+  const dir = tmp({ ...SRC, 'docs/spec.md': '# Especificacion\n\n## Contexto\nEl alcance es solo el documento.\n' });
+
+  const faltante = egmDrift({ cwd: dir, docsDir: 'docs-inexistente' });
+  assert.equal(faltante.missingDocs, true);
+  assert.equal(faltante.scanned, 0);
+  assert.deepEqual(faltante.drift, []);
+  assert.equal(faltante.docsDir, path.join(dir, 'docs-inexistente'));
+  assert.notEqual(faltante.message, 'No drift detected');
+  assert.ok(faltante.message.includes(path.join(dir, 'docs-inexistente')), faltante.message);
+
+  const presente = egmDrift({ cwd: dir, docsDir: 'docs' });
+  assert.equal(presente.missingDocs, false);
+  assert.equal(presente.scanned, 1);
+  assert.equal(presente.docsDir, path.join(dir, 'docs'));
+  assert.deepEqual(presente.drift, []);
+  assert.equal(presente.message, 'No drift detected');
+  drop(dir);
+});
+
+test('egmDrift: una referencia con separador de Windows se detecta y se normaliza', () => {
+  const dir = tmp({
+    ...SRC,
+    'docs/spec.md': '# Especificacion\n\n## Contexto\nLa logica rota vive en src\\inexistente.js desde el inicio.\nLa logica buena vive en src\\cli.js desde siempre.\n',
+  });
+  const r = egmDrift({ cwd: dir, docsDir: 'docs' });
+  const missing = r.drift.filter(d => d.kind === 'missing_feature');
+  assert.equal(missing.length, 1, JSON.stringify(r.drift, null, 2));
+  assert.equal(missing[0].ref, 'src/inexistente.js');
+  assert.ok(!missing.some(d => d.ref === 'src/cli.js'), 'la ruta existente con \\ no es drift');
+  drop(dir);
+});
+
+test('egmDrift: una repeticion de sintaxis como ") + " no es logic_shortcut', () => {
+  const dir = tmp({
+    'src/join.js': [
+      'export function join(a, b, c) {',
+      '  const x = a + ") + " + b;',
+      '  const y = b + ") + " + c;',
+      '  const z = a + ") + " + c;',
+      '  return [x, y, z];',
+      '}',
+      '',
+    ].join('\n'),
+    'docs/spec.md': '# Especificacion del armado\n\n## Contexto\nEl separador debe ser configurable y no quedar fijo en el codigo.\nLa logica vive en `src/join.js`.\n\n## Alcance\nSolo el armado del texto.\n',
+  });
+  const r = egmDrift({ cwd: dir, docsDir: 'docs' });
+  assert.deepEqual(r.drift.filter(d => d.kind === 'logic_shortcut'), [], JSON.stringify(r.drift, null, 2));
+  drop(dir);
+
+  // Control positivo: un valor de negocio repetido si se reporta (el filtro no apaga todo).
+  const dir2 = tmp({
+    'src/pago.js': "export function p() {\n  return ['pendiente-pago', 'pendiente-pago', 'pendiente-pago'];\n}\n",
+    'docs/spec.md': '# Especificacion del pago\n\n## Contexto\nEl estado de pago debe ser configurable y no quedar fijo en el codigo.\nLa logica vive en `src/pago.js`.\n\n## Alcance\nSolo el estado.\n',
+  });
+  const r2 = egmDrift({ cwd: dir2, docsDir: 'docs' });
+  const hit = r2.drift.filter(d => d.kind === 'logic_shortcut');
+  assert.equal(hit.length, 1, JSON.stringify(r2.drift, null, 2));
+  assert.equal(hit[0].ref, 'src/pago.js');
+  drop(dir2);
+});
+
+test('target no markdown: PASS con los checkers de Markdown en skipped', () => {
+  const dir = tmp({ 'lib/math.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
+  const r = egmReview({ cwd: dir, target: 'lib/math.js' });
+  assert.equal(r.verdict, 'PASS', JSON.stringify(r.findings, null, 2));
+  const mdOnly = ['egm-structural', 'egm-style', 'egm-comprehension', 'egm-implementation-readiness', 'egm-design'];
+  for (const persona of mdOnly) {
+    const rv = r.reviewers.find(x => x.persona === persona);
+    assert.ok(rv, persona);
+    assert.equal(rv.status, 'skipped', persona);
+    assert.ok(rv.motivo, persona + ' debe declarar el motivo');
+  }
+  assert.equal(r.summary.revisores.skipped, mdOnly.length);
+  assert.equal(r.summary.revisores.failed, 0);
+  drop(dir);
+});
+
+test('revisores: la lista refleja las 10 personas y solo una es manual', () => {
+  const dir = tmp({ ...SRC, 'docs/spec.md': DOC_LIMPIO });
+  const r = egmReview({ cwd: dir, target: 'docs/spec.md' });
+  assert.equal(r.reviewers.length, EGM_PERSONAS.length);
+  const manual = r.reviewers.filter(rv => rv.status === 'manual');
+  assert.equal(manual.length, 1);
+  assert.equal(manual[0].persona, 'egm-bootstrap-orchestrator');
+  assert.ok(manual[0].motivo);
+  assert.equal(r.summary.revisores.manual, 1);
+  drop(dir);
+});
+
+test('maxRounds: se respeta el cap y la convergencia viaja en el resultado', () => {
+  const dir = tmp({ ...SRC, 'docs/spec.md': DOC_SIN_ALTERNATIVAS });
+  const r = egmReview({ cwd: dir, target: 'docs/spec.md', maxRounds: 3 });
+  assert.equal(r.maxRounds, 3);
+  assert.ok(r.rounds >= 2, 'rondas: ' + r.rounds);
+  assert.ok(r.rounds <= 3, 'rondas: ' + r.rounds);
+  assert.equal(typeof r.convergence, 'object');
+  assert.ok(r.convergence);
+  assert.equal(typeof r.convergence.converged, 'boolean');
+  assert.equal(r.convergence.converged, false);
+  drop(dir);
+});
+
+const DOC_MIXTO = `# Especificacion del modulo QZX
+
+## Contexto
+La logica vive en \`src/inexistente.js\` y el modulo QZX la reutiliza.
+
+## Alcance
+El alcance es revisar el modulo QZX.
+`;
+
+test('severidad: los hallazgos salen ordenados blocker -> major -> nit', () => {
+  const dir = tmp({ ...SRC, 'docs/spec.md': DOC_MIXTO });
+  const r = egmReview({ cwd: dir, target: 'docs/spec.md' });
+  const rank = { blocker: 0, major: 1, nit: 2 };
+  const orden = r.findings.map(f => f.severity);
+  assert.ok(orden.includes('blocker'), JSON.stringify(orden));
+  assert.ok(orden.includes('major'), JSON.stringify(orden));
+  assert.ok(orden.includes('nit'), JSON.stringify(orden));
+  assert.equal(orden[0], 'blocker');
+  assert.equal(orden[orden.length - 1], 'nit');
+  for (let i = 1; i < orden.length; i++) {
+    assert.ok(rank[orden[i - 1]] <= rank[orden[i]], 'orden roto: ' + JSON.stringify(orden));
+  }
+  // El reporte usa el mismo orden: la primera fila de hallazgo es el blocker.
+  const filas = r.report.split(/\r?\n/).filter(l => /^\| egm-[^|]+ \| egm-[^|]+ \| (blocker|major|nit) \|/.test(l));
+  assert.ok(filas.length >= 3, r.report);
+  assert.ok(filas[0].includes('| blocker |'), filas[0]);
+  assert.ok(filas[filas.length - 1].includes('| nit |'), filas[filas.length - 1]);
+  drop(dir);
+});
+
+test('convergencia: una resolucion con reabre=true vuelve a abrir el hallazgo settled', () => {
+  assert.equal(EGM_RESOLUCIONES.propose_fix.reabre, true);
+  assert.equal(EGM_RESOLUCIONES.contest.reabre, false);
+  const base = {
+    id: 'egm-style-77', persona: 'egm-style', severity: 'nit', dimension: 'relleno',
+    scope: 'style:dash-density:x', detail: 'nit', evidence: 'x', resolution: 'propose_fix',
+  };
+  const r1 = { findings: [Object.assign({}, base, { status: 'settled' })], reviewers: [] };
+  const r2 = { findings: [Object.assign({}, base, { status: 'open' })], reviewers: [] };
+  const r = egmConvergence({ findingsByRound: [r1, r2] });
+  const segundo = r.detalle[1].findings[0];
+  assert.equal(segundo.status, 'open');
+  assert.equal(segundo.reabierto, true);
+  assert.equal(r.churn, false);
+  assert.equal(r.converged, true);
+  assert.equal(r.verdict, 'PASS');
+});
+
+test('baseDiff: compara contra git y es null cuando no se pasa base', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const probe = spawnSync('git', ['--version'], { encoding: 'utf8' });
+  if (probe.error || probe.status !== 0) {
+    t.skip('git no disponible');
+    return;
+  }
+
+  const dir = tmp({ ...SRC, 'docs/spec.md': DOC_LIMPIO });
+  const run = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+  assert.equal(run(['init']).status, 0);
+  assert.equal(run(['config', 'user.email', 'egm@test.local']).status, 0);
+  assert.equal(run(['config', 'user.name', 'EGM Test']).status, 0);
+  assert.equal(run(['add', '-A']).status, 0);
+  const commit = run(['commit', '-m', 'base']);
+  assert.equal(commit.status, 0, commit.stderr);
+
+  fs.appendFileSync(path.join(dir, 'docs/spec.md'), '\n## Nota\nLinea agregada despues de la base.\n');
+
+  const r = egmReview({ cwd: dir, target: 'docs/spec.md', base: 'HEAD' });
+  assert.ok(r.baseDiff, 'baseDiff debe existir con base');
+  assert.equal(r.baseDiff.ok, true, r.baseDiff.message);
+  assert.equal(r.baseDiff.ref, 'HEAD');
+  assert.ok(r.baseDiff.files.some(f => f.file === 'docs/spec.md'), JSON.stringify(r.baseDiff.files));
+  assert.equal(r.baseDiff.target.changed, true);
+  assert.ok(r.report.includes('## Comparacion con base'));
+
+  const sinBase = egmReview({ cwd: dir, target: 'docs/spec.md' });
+  assert.equal(sinBase.base, null);
+  assert.equal(sinBase.baseDiff, null);
+  drop(dir);
+});

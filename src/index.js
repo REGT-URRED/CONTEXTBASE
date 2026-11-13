@@ -10,7 +10,7 @@ export { writeAtomic, withLock } from './fsutil.js';
 export { installGitHook, runLifecycleHook } from './hooks.js';
 export { startMcpServer } from './mcp.js';
 export { autoEnsure, silentInit, refreshStrands, refreshComponents, refreshRulesAndSync } from './auto.js';
-export { autoConfigureProject, autoConfigureGlobal, configureKilo, configureOpenCode, configureClaude, configureCursorAndIde, buildOpenCodePluginSource, hasStaleAgentConfig } from './autoconfig.js';
+export { autoConfigureProject, autoConfigureGlobal, configureKilo, configureOpenCode, configureClaude, configureCursorAndIde, buildOpenCodePluginSource, validateOpenCodePluginSource, hasStaleAgentConfig } from './autoconfig.js';
 export { startWatcher, syncWorkspaceChanges, startDaemonWatcher, stopDaemonWatcher, statusDaemonWatcher } from './watcher.js';
 export {
   PHILOSOPHY,

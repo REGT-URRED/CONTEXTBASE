@@ -19,6 +19,8 @@ import {
   runAutopilotCycle,
   verifyAgentObedience,
 } from './control.js';
+import { fileURLToPath } from 'node:url';
+import { applySandbox, listSandboxes, removeSandbox, runInSandbox } from './sandbox.js';
 
 const c = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m', cyan: '\x1b[36m',
@@ -41,13 +43,26 @@ export async function runExtra(command, args, cwd) {
     return runControlCommand(args, cwd);
   }
 
+  if (command === 'sandbox') {
+    return runSandboxCommand(args, cwd);
+  }
+
   if (command === 'agents') {
     return runAgentsCommand(args, cwd);
   }
 
   if (command === 'egm') {
-    const sub = args[1] && !args[1].startsWith('--') ? args[1] : 'review';
+    const sub = args[1] && !args[1].startsWith('--') ? args[1] : '';
     const isJson = args.includes('--json');
+    const flags = parseFlags(args.slice(1));
+    // Sin subcomando (o con --help) es un error de uso: no se ejecuta una revision condenada.
+    if (!sub) {
+      const helpFlag = args.slice(1).some(a => a === '--help' || a === '-h');
+      if (helpFlag) console.log(usEgmHelp());
+      else console.error(usEgmHelp());
+      process.exitCode = 2;
+      return true;
+    }
     const egm = await import('./egm.js');
     if (sub === 'personas') {
       if (isJson) { console.log(JSON.stringify(egm.EGM_PERSONAS, null, 2)); return true; }
@@ -71,23 +86,26 @@ export async function runExtra(command, args, cwd) {
       return true;
     }
     if (sub === 'drift') {
-      const res = await egm.egmDrift({ cwd, docsDir: (args.find(a => a.startsWith('--docs=')) || '').replace('--docs=', '') });
+      const res = await egm.egmDrift({ cwd, docsDir: typeof flags.docs === 'string' ? flags.docs : undefined });
       if (isJson) { console.log(JSON.stringify(res, null, 2)); return true; }
       console.log(res.message || ('Drift detectado: ' + res.drift.length));
-      for (const d of res.drift || []) console.log('  - [' + d.clase + '] ' + d.scope + ': ' + d.detalle);
+      for (const d of res.drift || []) {
+        const scope = d.ref || d.tech || '(sin referencia)';
+        console.log('  - [' + d.kind + '] ' + d.doc + ' -> ' + scope + ': ' + d.detail);
+      }
       if (res.drift && res.drift.length) process.exitCode = 1;
       return true;
     }
     if (sub === 'review') {
-      const targetArg = (args.find(a => a.startsWith('--target=')) || '').replace('--target=', '');
-      const baseArg = (args.find(a => a.startsWith('--base=')) || '').replace('--base=', '');
+      const targetArg = typeof flags.target === 'string' ? flags.target : '';
+      const baseArg = typeof flags.base === 'string' ? flags.base : '';
       const res = await egm.egmReview({ cwd, target: targetArg || undefined, base: baseArg || undefined });
       if (isJson) { console.log(JSON.stringify(res, null, 2)); }
       else { console.log(res.report || ''); }
       if (res.verdict !== 'PASS') process.exitCode = 1;
       return true;
     }
-    console.error('Uso: contextbase egm [review|drift|personas|standards|skills] [--target <archivo>] [--base <ref>] [--docs <dir>] [--json]');
+    console.error(c.red + 'Error: subcomando de egm no reconocido: ' + sub + c.reset + '\n' + usEgmHelp());
     process.exitCode = 2;
     return true;
   }
@@ -191,12 +209,13 @@ export async function runExtra(command, args, cwd) {
     }
     if (sub === 'enable' || sub === 'disable') {
       const name = args[2];
-      if (!name) { console.log(c.yellow + 'Uso: contextbase tools ' + sub + ' <nombre>' + c.reset); return true; }
+      if (!name || name.startsWith('--')) { console.error(c.yellow + 'Uso: contextbase tools ' + sub + ' <nombre>' + c.reset); process.exitCode = 2; return true; }
       setEnabled(name, sub === 'enable', cwd);
       console.log(c.green + 'OK:' + c.reset + ' ' + name + ' ' + (sub === 'enable' ? 'habilitado' : 'deshabilitado'));
       return true;
     }
-    console.log(c.yellow + 'Uso: contextbase tools list|enable <name>|disable <name>' + c.reset);
+    console.error(c.yellow + 'Uso: contextbase tools list|enable <name>|disable <name>' + c.reset);
+    process.exitCode = 2;
     return true;
   }
 
@@ -299,6 +318,184 @@ function printWorkers(workers) {
       String(w.session).padEnd(31) + (w.branch || '')
     );
   }
+}
+
+export async function runSandboxCommand(args, cwd) {
+  cwd = cwd || process.cwd();
+
+  if (args.length < 2) {
+    console.error(usSandboxHelp());
+    process.exitCode = 2;
+    return true;
+  }
+  if (args[1] === 'help' || args[1] === '--help' || args[1] === '-h') {
+    console.log(usSandboxHelp());
+    return true;
+  }
+
+  const sub = args[1];
+  const json = args.includes('--json');
+
+  if (sub === 'run') {
+    // Las flags propias se pueden escribir en cualquier posicion; tras `--` todo es del comando hijo.
+    const own = [];
+    const child = [];
+    const rest = args.slice(2);
+    for (let i = 0; i < rest.length; i += 1) {
+      const token = rest[i];
+      if (token === '--') { child.push(...rest.slice(i + 1)); break; }
+      if (token === '--json') { own.push(token); continue; }
+      if (token === '--timeout' || token === '--label') { own.push(token, rest[++i]); continue; }
+      if (token.startsWith('--timeout=') || token.startsWith('--label=')) { own.push(token); continue; }
+      child.push(token);
+    }
+    const command = child[0] || '';
+    const childArgs = child.slice(1);
+    const flags = parseFlags(own);
+    const timeoutMs = flags.timeout === undefined ? undefined : Number(flags.timeout);
+    if (!command || (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0))) {
+      console.error(usSandboxHelp());
+      process.exitCode = 2;
+      return true;
+    }
+    const res = await runInSandbox(cwd, command, childArgs, {
+      label: typeof flags.label === 'string' ? flags.label : '',
+      timeoutMs,
+    });
+    return reportSandboxRun(res, command, childArgs, json);
+  }
+
+  if (sub === 'list') {
+    const items = listSandboxes(cwd);
+    if (json) { console.log(JSON.stringify(items, null, 2)); return true; }
+    if (!items.length) { console.log('(sin sandboxes)'); return true; }
+    for (const it of items) {
+      const corrupt = it.corrupt ? c.yellow + ' [meta corrupta]' + c.reset : '';
+      console.log(it.id + corrupt + (it.label ? ' - ' + it.label : '') + ' | cambios: ' + it.changedFilesCount + (it.command ? ' | ' + it.command : ''));
+    }
+    return true;
+  }
+
+  if (sub === 'apply') {
+    const id = args[2] && !args[2].startsWith('--') ? args[2] : '';
+    if (!id) {
+      console.error('Uso: contextbase sandbox apply <id> [--files <a,b,c>] [--json]');
+      process.exitCode = 2;
+      return true;
+    }
+    const flags = parseFlags(args.slice(2));
+    const files = typeof flags.files === 'string' ? flags.files.split(',').map((f) => f.trim()).filter(Boolean) : null;
+    const res = applySandbox(cwd, id, { files });
+    if (json) {
+      console.log(JSON.stringify({ id, ...res }, null, 2));
+    } else {
+      if (res.error) console.log(c.red + 'Error:' + c.reset + ' ' + res.error);
+      console.log(c.green + 'Aplicados:' + c.reset + ' ' + (res.applied.join(', ') || '(ninguno)'));
+      console.log(c.yellow + 'Omitidos (borrados o ausentes):' + c.reset + ' ' + (res.skipped.join(', ') || '(ninguno)'));
+      if (res.rejected.length) console.log(c.red + 'Rechazados (fuera del proyecto):' + c.reset + ' ' + res.rejected.join(', '));
+    }
+    if (res.error || res.rejected.length) process.exitCode = 1;
+    return true;
+  }
+
+  if (sub === 'rm' || sub === 'remove') {
+    const id = args[2] && !args[2].startsWith('--') ? args[2] : '';
+    if (!id) {
+      console.error('Uso: contextbase sandbox rm <id> [--json]');
+      process.exitCode = 2;
+      return true;
+    }
+    const res = removeSandbox(cwd, id);
+    if (json) console.log(JSON.stringify({ id, ...res }, null, 2));
+    else console.log(res.removed ? c.green + 'Sandbox eliminado:' + c.reset + ' ' + id : c.yellow + 'Sandbox no encontrado:' + c.reset + ' ' + id);
+    if (!res.removed) process.exitCode = 1;
+    return true;
+  }
+
+  if (sub === 'auto' || sub === 'init') {
+    const flags = parseFlags(args.slice(2));
+    const timeoutMs = flags.timeout === undefined ? undefined : Number(flags.timeout);
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      console.error('Uso: contextbase sandbox ' + sub + ' [--timeout <ms>] [--label <texto>] [--json]');
+      process.exitCode = 2;
+      return true;
+    }
+    const entry = fileURLToPath(new URL('../bin/contextbase.js', import.meta.url));
+    const res = await runInSandbox(cwd, process.execPath, [entry, sub], {
+      label: typeof flags.label === 'string' ? flags.label : 'contingencia: ' + sub,
+      timeoutMs,
+      // Home aislado: la configuracion global se escribe dentro del sandbox, nunca en el equipo.
+      env: (sandboxPath) => ({
+        HOME: path.join(sandboxPath, '.home'),
+        USERPROFILE: path.join(sandboxPath, '.home'),
+      }),
+    });
+    if (json) {
+      console.log(JSON.stringify({ subcommand: sub, ...res }, null, 2));
+    } else {
+      console.log(c.bold + 'Plan de contingencia: contextbase ' + sub + ' sobre una copia aislada' + c.reset);
+      console.log('  Sandbox: ' + res.id + ' ' + c.dim + res.path + c.reset);
+      console.log('  Codigo de salida: ' + (res.exitCode === null ? 'n/a' : res.exitCode) + (res.timedOut ? c.yellow + ' (timeout)' + c.reset : ''));
+      console.log('  El proyecto real no fue modificado. Cambios propuestos (' + res.changedFiles.length + '):');
+      for (const f of res.changedFiles) console.log('    - ' + f);
+      if (res.stderr.trim()) console.log(c.gray + res.stderr.trimEnd() + c.reset);
+      console.log(c.dim + '  Promover con: contextbase sandbox apply ' + res.id + c.reset);
+    }
+    if (res.exitCode !== 0 || res.timedOut) process.exitCode = 1;
+    return true;
+  }
+
+  console.error(c.red + 'Subcomando de sandbox no reconocido: ' + sub + c.reset + '\n' + usSandboxHelp());
+  process.exitCode = 2;
+  return true;
+}
+
+function reportSandboxRun(res, command, childArgs, json) {
+  if (json) {
+    console.log(JSON.stringify(res, null, 2));
+  } else {
+    console.log(c.bold + 'Sandbox:' + c.reset + ' ' + res.id + ' ' + c.dim + res.path + c.reset);
+    console.log('Comando: ' + command + (childArgs.length ? ' ' + childArgs.join(' ') : ''));
+    console.log('Codigo de salida: ' + (res.exitCode === null ? 'n/a' : res.exitCode) + (res.timedOut ? c.yellow + ' (timeout)' + c.reset : ''));
+    console.log('Cambios detectados (' + res.changedFiles.length + '):');
+    for (const f of res.changedFiles) console.log('  - ' + f);
+    if (res.error) console.log(c.red + 'Error:' + c.reset + ' ' + res.error);
+    if (res.stdout.trim()) console.log('\n' + c.gray + '--- stdout ---' + c.reset + '\n' + res.stdout.trimEnd());
+    if (res.stderr.trim()) console.log('\n' + c.gray + '--- stderr ---' + c.reset + '\n' + res.stderr.trimEnd());
+  }
+  if (res.error || res.timedOut || res.exitCode !== 0) process.exitCode = 1;
+  return true;
+}
+
+function usEgmHelp() {
+  return [
+    'Uso: contextbase egm <subcomando> [opciones]',
+    '',
+    '  review  [--target <archivo>] [--base <ref>] [--json]',
+    '      Revision Elephant-Goldfish del archivo indicado (por defecto, el directorio actual).',
+    '  drift   [--docs <dir>] [--json]',
+    '      Deriva doc-codigo: referencias citadas en los docs que no existen en el proyecto.',
+    '  personas | standards | skills [--json]',
+    '      Catalogo del modelo EGM (personas revisoras, estandares y skills).',
+  ].join('\n');
+}
+
+function usSandboxHelp() {
+  return [
+    'Uso: contextbase sandbox <subcomando> [opciones]',
+    '',
+    '  run <comando> [args...] [--json] [--timeout <ms>] [--label <texto>]',
+    '      Ejecuta un comando sobre una copia aislada del proyecto y reporta los cambios.',
+    '      Usa -- antes de las flags que pertenecen al comando hijo.',
+    '  list [--json]',
+    '      Lista los sandboxes existentes (mas nuevos primero).',
+    '  apply <id> [--files <a,b,c>] [--json]',
+    '      Promueve al proyecto real solo los archivos cambiados (nunca borrados).',
+    '  rm <id> [--json]',
+    '      Elimina el sandbox.',
+    '  auto | init [--timeout <ms>] [--label <texto>] [--json]',
+    '      Plan de contingencia: corre "contextbase auto|init" aislado y reporta el diff sin tocar el proyecto.',
+  ].join('\n');
 }
 
 export function runControlCommand(args, cwd) {

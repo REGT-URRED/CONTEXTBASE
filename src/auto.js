@@ -8,15 +8,19 @@ import { injectAgentRules, CONTEXTBASE_VERSION } from './rules.js';
 import { refreshBaseline } from './guard.js';
 import { installSkill } from './installer.js';
 import { prepareStrandsContext, ensureStrandsSdk } from './strands.js';
-import { autoConfigureProject, ensureGitExclude, hasStaleAgentConfig } from './autoconfig.js';
+import { autoConfigureProject, ensureGitExclude, hasStaleAgentConfig, isHomeProjectDir } from './autoconfig.js';
 import { installGitHook } from './hooks.js';
 import { autoPulseWeb } from './web.js';
+// Import por namespace: si el motor EGM todavia no expone egmPulse, el latido
+// sigue cargando (un named import roto seria un error de modulo en ESM).
+import * as egmEngine from './egm.js';
 
 const BASE_FILES = ['fundamentos.md', 'changelog.md', 'tasklist.md'];
 const STRANDS_CONTEXT = path.join('contextbase', 'strands', 'context.json');
 const COMPONENTS_FILE = path.join('contextbase', 'componentes.md');
 const STALE_SOURCES = ['tasklist.md', 'changelog.md', 'componentes.md', 'fundamentos.md'];
 const COMPONENTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const EGM_BUDGET_MS = 5000;
 
 function resolveProject(projectDir) {
   return path.resolve(projectDir || process.cwd());
@@ -71,6 +75,7 @@ export function rulesStale(projectDir) {
 
 export function refreshStrands(projectDir) {
   const root = resolveProject(projectDir);
+  if (isHomeDirectory(root)) return false;
   try {
     if (!strandsStale(root)) return false;
     prepareStrandsContext(root);
@@ -88,6 +93,7 @@ export function refreshStrands(projectDir) {
  */
 export function scheduleStrandsSdk(projectDir) {
   const root = resolveProject(projectDir);
+  if (isHomeDirectory(root)) return null;
   if (isTestEnv()) return null;
   if (process.env.CONTEXTBASE_STRANDS_AUTOINSTALL === '0') return null;
   const stateFile = path.join(root, 'contextbase', 'strands', 'sdk.json');
@@ -107,6 +113,7 @@ export function scheduleStrandsSdk(projectDir) {
 
 export function refreshComponents(projectDir) {
   const root = resolveProject(projectDir);
+  if (isHomeDirectory(root)) return false;
   try {
     if (!componentsStale(root)) return false;
     runMaintenance(root);
@@ -118,6 +125,7 @@ export function refreshComponents(projectDir) {
 
 export function refreshRulesAndSync(projectDir) {
   const root = resolveProject(projectDir);
+  if (isHomeDirectory(root)) return false;
   try {
     if (!rulesStale(root)) return false;
     const analysis = analyzeProject(root);
@@ -132,6 +140,7 @@ export function refreshRulesAndSync(projectDir) {
 
 export function silentInit(projectDir, options = {}) {
   const root = resolveProject(projectDir);
+  if (isHomeDirectory(root)) return { created: false, skipped: 'home-directory', files: [] };
   const contextDir = path.join(root, 'contextbase');
   fs.mkdirSync(contextDir, { recursive: true });
 
@@ -167,18 +176,61 @@ export function silentInit(projectDir, options = {}) {
   return { created: true, files };
 }
 
-function isHomeDir(projectDir) {
-  const root = path.resolve(projectDir);
-  const home = path.resolve(os.homedir());
-  return process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home;
+function isSamePath(a, b) {
+  const left = path.resolve(a);
+  const right = path.resolve(b);
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+/**
+ * El directorio personal no es un proyecto: ahi no se crea contextbase/ ni
+ * AGENTS.md/CLAUDE.md/reglas. Se reutiliza el predicado de autoconfig.js y se
+ * completa resolviendo enlaces simbolicos y rutas relativas (realpath).
+ */
+export function isHomeDirectory(projectDir) {
+  if (isHomeProjectDir(projectDir)) return true;
+  try {
+    return isSamePath(fs.realpathSync(path.resolve(projectDir)), fs.realpathSync(path.resolve(os.homedir())));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pulso EGM dentro del latido: mantiene vivo el modelo Elefante-Pez Dorado sin
+ * que nadie tenga que acordarse de escribir `contextbase egm review`.
+ *
+ * Es trabajo sincrono de archivos, asi que se mide y se acota: si el pulso
+ * excede el presupuesto (options.egmBudgetMs, 5000 ms por defecto) se reporta
+ * egmPulsed: false. Nunca lanza: un fallo del motor no puede romper el latido.
+ *
+ * En entorno de pruebas no se ejecuta salvo pedido explicito (options.egmPulse),
+ * la misma convencion que usa autoConfigureProject.
+ */
+export function pulseEgm(projectDir, options = {}) {
+  const root = resolveProject(projectDir);
+  try {
+    if (isHomeDirectory(root)) return false;
+    if (isTestEnv() && options.egmPulse !== true) return false;
+    const pulse = typeof egmEngine.egmPulse === 'function' ? egmEngine.egmPulse : null;
+    if (!pulse) return false;
+    const budget = Number.isFinite(options.egmBudgetMs) ? Number(options.egmBudgetMs) : EGM_BUDGET_MS;
+    const started = Date.now();
+    pulse(root, { maxRounds: 1 });
+    const elapsed = Date.now() - started;
+    return elapsed <= budget;
+  } catch {
+    return false;
+  }
 }
 
 export function autoEnsure(projectDir, options = {}) {
   const root = resolveProject(projectDir);
-  if (isHomeDir(root)) {
+  if (isHomeDirectory(root)) {
     // El directorio personal no es un proyecto: no se crea ni opencode.json ni
     // AGENTS.md/kilo.json/contextbase aqui (ese era el "residuo" con schema de Kilo).
-    return { skipped: 'home-directory', strandsRefreshed: false, agentsConfigured: false, componentsRefreshed: false, rulesRefreshed: false, gitHookInstalled: false, webPulsed: false };
+    // Tampoco se pulsa EGM: sin proyecto no hay documento vivo que revisar.
+    return { skipped: 'home-directory', strandsRefreshed: false, agentsConfigured: false, componentsRefreshed: false, rulesRefreshed: false, gitHookInstalled: false, webPulsed: false, egmPulsed: false };
   }
   const summary = {
     initialized: false,
@@ -187,7 +239,8 @@ export function autoEnsure(projectDir, options = {}) {
     rulesRefreshed: false,
     agentsConfigured: false,
     gitHookInstalled: false,
-    webPulsed: false
+    webPulsed: false,
+    egmPulsed: false
   };
   try {
     const contextDir = path.join(root, 'contextbase');
@@ -196,6 +249,7 @@ export function autoEnsure(projectDir, options = {}) {
       silentInit(root, options);
       summary.initialized = true;
       summary.agentsConfigured = !isTestEnv() || Boolean(options.autoConfig);
+      summary.egmPulsed = pulseEgm(root, options);
       return summary;
     }
     summary.rulesRefreshed = refreshRulesAndSync(root);
@@ -218,6 +272,9 @@ export function autoEnsure(projectDir, options = {}) {
       const pulsed = autoPulseWeb(root, options.deps);
       summary.webPulsed = Boolean(pulsed);
     } catch {}
+
+    // Ultimo paso del latido: el veredicto EGM queda persistido para el digest.
+    summary.egmPulsed = pulseEgm(root, options);
   } catch {}
   return summary;
 }

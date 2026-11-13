@@ -54,7 +54,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `src/hooks.js`: Hooks Git (`post-commit`, `post-merge`, `post-checkout`) y ejecutor de eventos de ciclo de vida (`runLifecycleHook`).
 - `src/mcp.js`: Servidor MCP sobre stdio con cola secuencial FIFO, instrucciones vivas, 7 resources, 2 prompts, 26 tools (incluye `contextbase_terminals` y `contextbase_egm_review`) y watcher activo.
 - `src/bootstrap.js`: Recomendación y ejecución del arranque de un proyecto (`preview`, `run`).
-- `src/cli_extra.js`: Subcomandos extendidos del CLI (`swarm`, `bootstrap`, `guard`, `snapshot`, `restore`, `tools`, `mission`).
+- `src/cli_extra.js`: Subcomandos extendidos del CLI (`swarm`, `bootstrap`, `guard`, `snapshot`, `restore`, `tools`, `mission`, `egm`, `sandbox`).
 - `src/detect.js`: Detección de CLIs instalados, binarios en `PATH` y lectura JSON/JSONC de configuraciones MCP.
 - `src/export.js`: Exportación del estado o digest en JSON y HTML.
 - `src/guard.js`: Protección de archivos sensibles con línea base, hash, escaneo de cambios sospechosos y refresco controlado de la línea base (`refreshBaseline`).
@@ -63,6 +63,8 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - `src/review.js`: Revisión tipo thermos: diff, contenidos, prompts de revisor y fusión de reportes.
 - `src/slop.js`: Delivery gate antislop sobre el árbol de trabajo, con reglas de prosa y código por separado.
 - `src/snapshot.js`: Creación, listado, poda y restauración de snapshots del registro.
+- `src/egm.js`: Modelo de calidad EGM (Elephant-Goldfish): 10 personas, 5 estándares y 7 skills; revisión adversarial determinista (PASS/REFIX/RERUN/FAIL), convergencia por rondas limpias, detección de drift doc-código y comparación real contra una referencia git. `egmPulse` es el pulso que corre en el heartbeat y persiste el veredicto en `contextbase/egm/verdict.json`.
+- `src/sandbox.js`: Sandbox de contingencia: copia aislada del proyecto para ejecutar operaciones delicadas (`run`), detectar cambios (`list`), promoverlos (`apply`) o descartarlos (`rm`). Las rutas aplicadas se resuelven dentro del proyecto: cualquier escape se rechaza.
 - `src/strands.js`: Contexto Python para Strands (`contextbase/strands/`), configuración, tareas y `strands_runner.py` con escalado humano.
 - `src/swarm.js` y `src/swarm-agents.js`: Orquestación de enjambre por worktrees para `opencode` y `kilo`.
 - `src/prompts/`: Prompts de revisor `review-security.md`, `review-quality.md` y `mission-orchestration.md`.
@@ -76,7 +78,13 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 ### Contratos del Sistema (2026-11-11)
 - **Códigos de salida:** `0` éxito, `1` error de ejecución, `2` error de uso (subcomando/flag/argumento inválido).
 - **Configuración de usuario (global y proyecto):** un archivo existente que no parsea NUNCA se sobrescribe; se deja backup `.bak-contextbase` y se reporta con `[ContextBase Error] code=CONFIG_INVALID_JSON`. Los `.jsonc` existentes (Kilo/OpenCode) se fusionan quirúrgicamente preservando comentarios, con precedencia sobre el `.json`.
-- **Plugin de agentes:** el default export debe ser un objeto con `id` y `setup` (OpenCode v2); la factory v1 se conserva como named export. Todo `spawn` lleva listener de `error` (un ENOENT/EINVAL abortaba el host) y nunca se invoca un binario inexistente.
+- **Plugin de agentes:** el default export debe ser un objeto con `id` y una función. El contrato que Activa correctamente en OpenCode v2 es `{ id, server, setup }` (la API Promise registra los hooks por `ctx`). `effect` está PROHIBIDO: el runtime lo prefiere sobre `setup` (`"effect" in r ? r : due(r)`) y la activación queda colgada esperando hooks de `ctx`. `validateOpenCodePluginSource()` exige `id` + `setup` y rechaza `effect`; el generador se autovalida antes de escribir, así que un plugin inválido nunca llega a disco. La factory v1 se conserva como named export. Todo `spawn` lleva listener de `error` (un ENOENT/EINVAL abortaba el host) y nunca se invoca un binario inexistente.
+- **No pisado del usuario:** ninguna configuración de agente sobrescribe contenido ajeno. Los JSON se fusionan clave por clave (respaldando antes) y los archivos de reglas usan un bloque marcado; el archivo existente del usuario manda.
+- **Precedencia de configuración:** si el proyecto ya usa `opencode.jsonc` o `kilo.jsonc`, ContextBase escribe y fusiona ahí; nunca crea un `.json` paralelo que eclipse al del usuario.
+- **Esquema del host:** la fusion del config se adapta al esquema instalado (v1: `plugin`/`permission`/`mcp.<n>`; v2: `plugins`/`permissions`/`mcp.servers`) y es idempotente: si no hay cambios reales no se reescribe el archivo (reescribirlo dispara la recarga del host y el churn).
+- **Directorio personal:** el home no es un proyecto. Ninguna ruta (`init`, `auto`, `status`, `log`, `sync`) deja scaffolding en la raíz del directorio personal.
+- **Sandbox (plan de contingencia):** una operación delicada se ejecuta sobre una copia aislada (`contextbase sandbox run`), se listan los cambios y solo se promote al proyecto real con `contextbase sandbox apply`. `auto` e `init` aceptan `--sandbox` para ese modo.
+- **EGM (calidad):** el modelo corre en el heartbeat (`autoEnsure` -> `egmPulse`), el veredicto vive en `contextbase/egm/verdict.json`, aparece en el digest vivo con una accion concreta y la skill `contextbase-egm` enseña el bucle revisión -> corrección -> PASS. `contextbase egm review|drift|personas|standards|skills` es determinista y sin modelos. Un directorio de documentación inexistente se reporta como `missingDocs`, nunca como "sin drift"; un objetivo que no es Markdown puede alcanzar PASS con los revisores aplicables en `skipped`.
 - **MCP:** ninguna tool puede escribir en stdout durante una llamada (el stream JSON-RPC se corrompe); la salida se captura y viaja en el contenido de la respuesta. Un servidor MCP es un proceso por cliente: reconectar significa un proceso nuevo, y el anterior debe salir con codigo 0.
 - **Guard de pruebas:** toda ruta que pueda lanzar procesos de agente (swarm/web/auto/hooks/watcher) está inerte bajo `NODE_TEST_CONTEXT`; `node --test` debe terminar solo y en segundos.
 - **Autogestión (sin intervención manual):** ContextBase cierra automáticamente las terminales de sus propios workers cuando el trabajo terminó (`done`; `stale` solo con `--include-stale`), registra el SDK de Strands en `contextbase/strands/sdk.json` y lo instala en segundo plano si falta (`CONTEXTBASE_STRANDS_AUTOINSTALL=0` lo desactiva). El runner `strands_runner.py` degrada sin traza: modo seco sin SDK (salida 0) y modo degradado sin credenciales de proveedor (salida 3).
@@ -90,7 +98,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Versión:** 1.5.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (71), Markdown (15), JSON (2)
+- **Lenguajes dominantes:** JavaScript (78), Markdown (16), JSON (2)
 - **Dependencias:** Sin dependencias externas registradas.
 - **Scripts:** start, postinstall, auto, watch, test, audit, mcp, pack:release, test:ci, release:github
 - **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test

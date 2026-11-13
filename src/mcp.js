@@ -52,7 +52,7 @@ const TOOLS = [
   { name: 'contextbase_swarm_send', description: 'Envia un mensaje u orden de REFIX a una Araña/worker (o all). Entrega nativa en la sesion viva o por archivo.', inputSchema: { type: 'object', properties: { worker: { type: 'string' }, spider: { type: 'string' }, message: { type: 'string' }, run: { type: 'string' } }, required: ['message'], additionalProperties: false } },
   { name: 'contextbase_swarm_collect', description: 'Reune result.md de cada Araña, da veredicto de merge por rama (clean/conflict) y opcionalmente ejecuta arbitrate o weave.', inputSchema: { type: 'object', properties: { run: { type: 'string' }, arbitrate: { type: 'boolean' }, weave: { type: 'boolean' }, merge: { type: 'boolean' } }, additionalProperties: false } },
   { name: 'contextbase_swarm_stop', description: 'Detiene los procesos de las Arañas/workers vivos del run.', inputSchema: { type: 'object', properties: { run: { type: 'string' } }, additionalProperties: false } },
-  { name: 'contextbase_terminals', description: 'Identifica terminales/procesos de agente abiertos para este proyecto (action=list; solo lectura). Cierra terminales de agente (action=close: por defecto DRY-RUN, confirm=true ejecuta; nunca cierra el árbol propio ni procesos no identificados). Cierra automáticamente las terminales cuyo trabajo de Araña ya terminó (action=auto; confirm=true ejecuta, dry-run por defecto). Envía trabajo por contrato nativo (action=send): opencode run --session / kilo run --session; agentes sin sesión nativa devuelven isError con sus capacidades.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'close', 'auto', 'send'] }, targets: { type: 'array', items: {} }, message: { type: 'string' }, confirm: { type: 'boolean' }, force: { type: 'boolean' }, includeStale: { type: 'boolean' } }, required: ['action'], additionalProperties: false } }
+  { name: 'contextbase_terminals', description: 'Identifica terminales/procesos de agente abiertos para este proyecto (action=list; solo lectura). Cierra terminales de agente (action=close: por defecto DRY-RUN, confirm=true ejecuta; nunca cierra el árbol propio ni procesos no identificados). Cierra automáticamente las terminales cuyo trabajo de Araña ya terminó (action=auto; confirm=true ejecuta, dry-run por defecto). Envía trabajo por contrato nativo (action=send, requiere pid y message): opencode run --session / kilo run --session; agentes sin sesión nativa devuelven isError con sus capacidades.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'close', 'auto', 'send'] }, targets: { type: 'array', items: {} }, pid: { type: 'number' }, message: { type: 'string' }, confirm: { type: 'boolean' }, force: { type: 'boolean' }, includeStale: { type: 'boolean' } }, required: ['action'], additionalProperties: false } }
 ];
 
 const RESOURCES = [
@@ -409,6 +409,8 @@ async function withCapturedStdout(fn) {
 let serverActivo = false;
 
 export async function startMcpServer(projectDir = process.cwd()) {
+  // Marca explicita para que hooks.js nunca intente leer el stdin JSON-RPC del host.
+  process.env.CONTEXTBASE_MCP = '1';
   // Dos interfaces readline sobre el mismo stdin duplicarian las respuestas.
   if (serverActivo) return;
   serverActivo = true;
@@ -481,6 +483,9 @@ export async function startMcpServer(projectDir = process.cwd()) {
       if (method === 'tools/call') {
         const name = params?.name;
         const args = params?.arguments || {};
+        // Una tool puede fijar process.exitCode (uso invalido); el servidor no debe
+        // terminar con ese codigo porque el host lo interpreta como crash.
+        const prevExitCode = process.exitCode;
         try {
           try { autoEnsure(projectDir); } catch {}
           const { value: out, captured } = await withCapturedStdout(() => callTool(name, args, projectDir));
@@ -489,6 +494,8 @@ export async function startMcpServer(projectDir = process.cwd()) {
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
         } catch (e) {
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true } });
+        } finally {
+          process.exitCode = prevExitCode;
         }
       }
       return reply({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Metodo no soportado: ' + method } });

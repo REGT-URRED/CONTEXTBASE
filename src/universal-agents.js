@@ -272,6 +272,174 @@ export function buildUniversalLauncher({
     : `#!/bin/sh\n${renderedLine}\n`;
 }
 
+const BACKUP_SUFFIX = '.bak-contextbase';
+// Mismas marcas que src/rules.js (injectAgentRules): si ambos inyectores las comparten,
+// re-ejecutar reemplaza el bloque en vez de duplicarlo.
+const RULE_START_TAG = '<!-- CONTEXTBASE:START -->';
+const RULE_END_TAG = '<!-- CONTEXTBASE:END -->';
+const AIDER_HEADER = `# Generado por ContextBase - Filosofia: "${PHILOSOPHY}"`;
+const AIDER_READ_PATHS = [
+  'AGENTS.md',
+  'contextbase/fundamentos.md',
+  'contextbase/tasklist.md',
+  'contextbase/componentes.md',
+];
+
+/**
+ * Copia de seguridad de un archivo de usuario. Solo la primera vez, para conservar el original.
+ * Devuelve la ruta del backup o null.
+ */
+function backupFile(file) {
+  if (!fs.existsSync(file)) return null;
+  const backup = file + BACKUP_SUFFIX;
+  if (fs.existsSync(backup)) return backup;
+  try {
+    fs.copyFileSync(file, backup);
+    return backup;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Un JSON de usuario corrupto no se toca: se respalda y se reporta el fallo.
+ * Se acumula en `failures` cuando el llamador pasa un array; si no, configureUniversalBridges lo lanza.
+ */
+function reportInvalidJson(file, err, failures) {
+  backupFile(file);
+  failures.push({
+    code: 'CONFIG_INVALID_JSON',
+    op: 'configureUniversalBridges',
+    file,
+    message: `${file} no es JSON valido (${err.message}); no se modifico.`,
+  });
+}
+
+/**
+ * Fusiona claves sobre un JSON de usuario preservando todas las claves existentes.
+ * Corrupto: backup y no se escribe. Inexistente: se crea desde {}.
+ */
+function mergeJsonFile(file, mutate, failures) {
+  const exists = fs.existsSync(file);
+  let cfg = {};
+  if (exists) {
+    const raw = fs.readFileSync(file, 'utf8');
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('se esperaba un objeto JSON');
+      }
+      cfg = parsed;
+    } catch (err) {
+      reportInvalidJson(file, err, failures);
+      return false;
+    }
+    backupFile(file);
+  }
+  mutate(cfg);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeAtomic(file, JSON.stringify(cfg, null, 2) + '\n');
+  return true;
+}
+
+/**
+ * Inyecta el bloque de reglas sin destruir el texto del usuario: reemplaza solo el bloque
+ * marcado (o uno sin END) y si no lo encuentra lo agrega al final. Escribe solo si cambió.
+ */
+function mergeRuleBlock(file, block = CONTEXTBASE_RULE_BLOCK) {
+  const existed = fs.existsSync(file);
+  const content = existed ? fs.readFileSync(file, 'utf8') : '';
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const text = eol === '\n' ? block : block.replace(/\n/g, eol);
+  const startIdx = content.indexOf(RULE_START_TAG);
+  const endIdx = content.indexOf(RULE_END_TAG);
+
+  let updated;
+  if (startIdx !== -1 && endIdx > startIdx) {
+    updated = content.slice(0, startIdx) + text + content.slice(endIdx + RULE_END_TAG.length);
+  } else if (startIdx !== -1) {
+    updated = content.slice(0, startIdx) + text + eol;
+  } else {
+    const trimmed = content.trimEnd();
+    updated = trimmed.length > 0 ? `${trimmed}${eol}${eol}${text}${eol}` : `${text}${eol}`;
+  }
+
+  if (existed && updated === content) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeAtomic(file, updated);
+  return true;
+}
+
+/**
+ * Fusiona items en un `read:` de YAML sin duplicar la clave ni repetir items.
+ * Bloque: agrega los faltantes con la indentacion existente. Inline: los agrega dentro de los
+ * corchetes. Escalar: respeta la lista del usuario. `extraLines` solo se agregan si faltan.
+ */
+function mergeYamlList(file, items = [], extraLines = []) {
+  const existed = fs.existsSync(file);
+  const content = existed ? fs.readFileSync(file, 'utf8') : '';
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const missing = items.filter((item) => !content.includes(item));
+  const extras = extraLines.filter((line) => !content.includes(line));
+  if (existed && !missing.length && !extras.length) return false;
+
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const readIndex = lines.findIndex((line) => /^read:/.test(line));
+  let body;
+
+  if (!content.trim()) {
+    body = [AIDER_HEADER, 'read:', ...items.map((i) => `  - ${i}`)].join('\n') + '\n';
+  } else if (readIndex === -1) {
+    body =
+      content.replace(/\s*$/, '') +
+      '\n\n' +
+      [AIDER_HEADER, 'read:', ...items.map((i) => `  - ${i}`)].join('\n') +
+      '\n';
+  } else {
+    const value = lines[readIndex].replace(/^read:[ \t]*/, '');
+    if (value.startsWith('[')) {
+      const inside = value.replace(/^\[/, '').replace(/\]\s*$/, '').replace(/,\s*$/, '').trim();
+      if (missing.length) {
+        lines[readIndex] = inside
+          ? `read: [${inside}, ${missing.join(', ')}]`
+          : `read: [${missing.join(', ')}]`;
+      }
+    } else if (value.trim()) {
+      // `read:` escalar del usuario: se deja intacto.
+    } else {
+      let indent = '  ';
+      let insertAt = readIndex + 1;
+      for (let i = readIndex + 1; i < lines.length; i++) {
+        const m = lines[i].match(/^([ \t]+)-[ \t]/);
+        if (!m) break;
+        indent = m[1];
+        insertAt = i + 1;
+      }
+      lines.splice(insertAt, 0, ...missing.map((i) => `${indent}- ${i}`));
+    }
+    body = lines.join('\n');
+  }
+
+  let updated = body;
+  for (const line of extras) {
+    if (!updated.includes(line)) updated = updated.replace(/\s*$/, '') + '\n' + line + '\n';
+  }
+  const out = eol === '\r\n' ? updated.replace(/\n/g, '\r\n') : updated;
+
+  if (existed && out === content) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeAtomic(file, out);
+  return true;
+}
+
+/**
+ * Configura `.aider.conf.yml` agregando los `read:` de ContextBase y `auto-commits`
+ * sin tocar el resto de la configuracion del usuario.
+ */
+function mergeAiderConfig(file) {
+  return mergeYamlList(file, AIDER_READ_PATHS, ['auto-commits: true']);
+}
+
 /**
  * Genera los archivos puente de configuración universal para agentes adicionales
  * (Aider, Cline/Roo, Copilot/VSCode, Gemini CLI, Continue, Windsurf) cuando se solicita
@@ -282,74 +450,49 @@ export function configureUniversalBridges(projectDir = process.cwd(), options = 
   const binPath = (options.binPath || path.resolve(root, 'bin', 'contextbase.js')).replace(/\\/g, '/');
   const nodePath = (options.nodePath || process.execPath).replace(/\\/g, '/');
   const written = [];
+  const failures = [];
   const includeAll = Boolean(options.includeAll || options.universal);
 
   // 1. Cline & Roo Code (.clinerules, .roorules, .roo/mcp.json)
   if (includeAll || fs.existsSync(path.join(root, '.clinerules')) || fs.existsSync(path.join(root, '.roo'))) {
-    writeAtomic(path.join(root, '.clinerules'), CONTEXTBASE_RULE_BLOCK + '\n');
+    mergeRuleBlock(path.join(root, '.clinerules'));
     written.push('.clinerules');
-    writeAtomic(path.join(root, '.roorules'), CONTEXTBASE_RULE_BLOCK + '\n');
+    mergeRuleBlock(path.join(root, '.roorules'));
     written.push('.roorules');
     const rooMcp = path.join(root, '.roo', 'mcp.json');
-    writeAtomic(
-      rooMcp,
-      JSON.stringify(
-        {
-          mcpServers: {
-            contextbase: {
-              command: nodePath,
-              args: [binPath, 'mcp'],
-              alwaysAllow: ['contextbase_status', 'contextbase_context', 'contextbase_log', 'contextbase_task', 'contextbase_sync'],
-            },
-          },
-        },
-        null,
-        2
-      ) + '\n'
-    );
+    mergeJsonFile(rooMcp, cfg => {
+      if (!cfg.mcpServers || typeof cfg.mcpServers !== 'object') cfg.mcpServers = {};
+      cfg.mcpServers.contextbase = {
+        command: nodePath,
+        args: [binPath, 'mcp'],
+        alwaysAllow: ['contextbase_status', 'contextbase_context', 'contextbase_log', 'contextbase_task', 'contextbase_sync'],
+      };
+    }, failures);
     written.push('.roo/mcp.json');
   }
 
   // 2. GitHub Copilot & VS Code (.github/copilot-instructions.md, .vscode/mcp.json)
   if (includeAll || fs.existsSync(path.join(root, '.github')) || fs.existsSync(path.join(root, '.vscode'))) {
     const copilotFile = path.join(root, '.github', 'copilot-instructions.md');
-    writeAtomic(copilotFile, CONTEXTBASE_RULE_BLOCK + '\n');
+    mergeRuleBlock(copilotFile);
     written.push('.github/copilot-instructions.md');
 
     const vscodeMcp = path.join(root, '.vscode', 'mcp.json');
-    writeAtomic(
-      vscodeMcp,
-      JSON.stringify(
-        {
-          servers: {
-            contextbase: {
-              type: 'stdio',
-              command: nodePath,
-              args: [binPath, 'mcp'],
-            },
-          },
-        },
-        null,
-        2
-      ) + '\n'
-    );
+    mergeJsonFile(vscodeMcp, cfg => {
+      if (!cfg.servers || typeof cfg.servers !== 'object') cfg.servers = {};
+      cfg.servers.contextbase = {
+        type: 'stdio',
+        command: nodePath,
+        args: [binPath, 'mcp'],
+      };
+    }, failures);
     written.push('.vscode/mcp.json');
   }
 
   // 3. Aider (.aider.conf.yml)
   if (includeAll || fs.existsSync(path.join(root, '.aider.conf.yml'))) {
     const aiderFile = path.join(root, '.aider.conf.yml');
-    const aiderYaml = [
-      '# Generado por ContextBase - Filosofia: "No es la IA, es quien controla a la IA"',
-      'read:',
-      '  - AGENTS.md',
-      '  - contextbase/fundamentos.md',
-      '  - contextbase/tasklist.md',
-      '  - contextbase/componentes.md',
-      'auto-commits: true',
-      '',
-    ].join('\n');
-    writeAtomic(aiderFile, aiderYaml);
+    mergeAiderConfig(aiderFile);
     written.push('.aider.conf.yml');
   }
 
@@ -360,22 +503,14 @@ export function configureUniversalBridges(projectDir = process.cwd(), options = 
     written.push('.gemini/rules/contextbase.md');
 
     const gemSettings = path.join(root, '.gemini', 'settings.json');
-    writeAtomic(
-      gemSettings,
-      JSON.stringify(
-        {
-          mcpServers: {
-            contextbase: {
-              command: nodePath,
-              args: [binPath, 'mcp'],
-              trust: true,
-            },
-          },
-        },
-        null,
-        2
-      ) + '\n'
-    );
+    mergeJsonFile(gemSettings, cfg => {
+      if (!cfg.mcpServers || typeof cfg.mcpServers !== 'object') cfg.mcpServers = {};
+      cfg.mcpServers.contextbase = {
+        command: nodePath,
+        args: [binPath, 'mcp'],
+        trust: true,
+      };
+    }, failures);
     written.push('.gemini/settings.json');
   }
 
@@ -384,6 +519,12 @@ export function configureUniversalBridges(projectDir = process.cwd(), options = 
     const contRule = path.join(root, '.continue', 'rules', 'contextbase.md');
     writeAtomic(contRule, CONTEXTBASE_RULE_BLOCK + '\n');
     written.push('.continue/rules/contextbase.md');
+  }
+
+  if (failures.length) {
+    // El llamador puede drenar los fallos (autoConfigureProject) o recibirlos como excepcion.
+    if (Array.isArray(options.failures)) options.failures.push(...failures);
+    else throw new Error(failures.map((f) => `[${f.code}] ${f.message}`).join('; '));
   }
 
   return written;

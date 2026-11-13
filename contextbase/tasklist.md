@@ -5,6 +5,13 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] [2026-11-13] EGM vivo como funcionalidad de base: pulso automatico en el heartbeat (`egmPulsed`), veredicto en `contextbase/egm/verdict.json`, seccion propia en el digest vivo e instalacion de la skill `contextbase-egm` en todos los agentes
+- [x] [2026-11-13] Fusion del config de OpenCode adaptada al esquema instalado (v1 vs v2: `plugin`/`permission`/`mcp.<n>` vs `plugins`/`permissions`/`mcp.servers`) e idempotente: sin cambios reales no se reescribe el archivo
+- [x] [2026-11-13] Contrato del plugin OpenCode v2 verificado contra el binario instalado y blindado con validador (`validateOpenCodePluginSource`): un plugin invalido ya no se escribe a disco
+- [x] [2026-11-13] Sandbox como plan de contingencia: `contextbase sandbox run|list|apply|rm` + `--sandbox` en `auto`/`init` (aisla la operacion delicada y permite promover el resultado a mano)
+- [x] [2026-11-13] Modelo EGM endurecido en libreria (docs ausentes ya no se reportan como limpios, findings nulos tolerados, sin falsos positivos de hardcode, referencias Windows, 10/10 personas, PASS posible en objetivos no markdown, `--base` real contra git, `maxRounds` efectivo, orden de severidad y `reabre` respetados) y en CLI (drift legible, error de uso con exit 2, flags con espacio, `egm` en el `--help`)
+- [x] [2026-11-13] Auditoria de bugs ocultos superada: no se pisan archivos del usuario, se respeta la precedencia `.jsonc`, el servidor MCP ya no se cuelga leyendo stdin, el directorio personal queda fuera de todo scaffold, `hook remove` no borra hooks ajenos y el proceso MCP no hereda exit codes de error de uso
+
 - [x] QA en vivo completa y remediación: suite 112/112 en verde, termina sola en ~13 s
 - [x] Fix del colgado de `node --test`: timeouts en agente/git, deps propagadas, guard NODE_TEST_CONTEXT
 - [x] Contrato no-pisado de config global/proyecto (backup .bak-contextbase, fusión JSONC quirúrgica con precedencia .jsonc)

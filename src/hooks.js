@@ -78,6 +78,11 @@ export function installGitHook(projectDir, action = 'install') {
       } catch {}
     }
     if (!fs.existsSync(hookPath)) return { ok: true, message: 'No habia hook post-commit instalado.' };
+    const existing = fs.readFileSync(hookPath, 'utf8');
+    if (!existing.includes('ContextBase autosave')) {
+      // Un hook ajeno que install se niega a tocar jamas se elimina desde 'remove'.
+      return { ok: false, message: 'post-commit ajeno: no se elimina.' };
+    }
     fs.unlinkSync(hookPath);
     return { ok: true, message: 'Hook post-commit eliminado.' };
   }
@@ -132,6 +137,9 @@ export function installGitHook(projectDir, action = 'install') {
 
 function parseStdinPayload() {
   try {
+    // Dentro del servidor MCP el stdin es el canal JSON-RPC vivo del host: leerlo
+    // de forma sincrona bloquea el proceso para siempre (el host nunca lo cierra).
+    if (process.env.CONTEXTBASE_MCP === '1') return null;
     if (process.stdin.isTTY) return null;
     const raw = fs.readFileSync(0, 'utf8').trim();
     if (!raw) return null;

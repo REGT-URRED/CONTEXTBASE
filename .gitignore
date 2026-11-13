@@ -33,6 +33,8 @@ contextbase/snapshot/
 contextbase/strands/
 contextbase/snapshot/
 contextbase/swarm/
+contextbase/sandbox/
+contextbase/egm/
 contextbase/*.lock
 contextbase/.watcher.pid
 contextbase/.auto-session.json

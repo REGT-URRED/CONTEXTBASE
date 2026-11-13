@@ -39,8 +39,8 @@ const IGNORED_FILES = new Set([
   'opencode.json',
   'opencode.jsonc',
   '.mcp.json',
-  'AGENTS.md',
-  'CLAUDE.md',
+  'agents.md',
+  'claude.md',
   '.cursorrules',
   '.windsurfrules',
   'contextbase-pack.txt'
@@ -59,7 +59,7 @@ export function isRelevantPath(relPath) {
   if (!norm) return false;
   if (norm[1] === ':' && norm[2] === '/') return false;
   if (norm.startsWith('../') || norm === '..') return false;
-  if (IGNORED_FILES.has(norm)) return false;
+  if (IGNORED_FILES.has(norm.toLowerCase())) return false;
   if (norm.endsWith('.tmp') || norm.endsWith('.lock') || norm.endsWith('.log')) return false;
   for (const prefix of IGNORED_PREFIXES) {
     if (norm === prefix.slice(0, -1) || norm.startsWith(prefix)) return false;
