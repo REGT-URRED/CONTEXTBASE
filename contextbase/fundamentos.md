@@ -98,7 +98,7 @@ Este sistema resuelve la pérdida de contexto y continuidad técnica entre sesio
 - **Versión:** 1.5.0
 - **Ecosistema:** Node.js / JavaScript / TypeScript
 - **Frameworks:** Librerías estándar / Vanilla
-- **Lenguajes dominantes:** JavaScript (78), Markdown (16), JSON (2)
+- **Lenguajes dominantes:** JavaScript (82), Markdown (17), JSON (2)
 - **Dependencias:** Sin dependencias externas registradas.
 - **Scripts:** start, postinstall, auto, watch, test, audit, mcp, pack:release, test:ci, release:github
 - **Directorios raíz:** bin, contextbase, docs, scripts, skills, src, test

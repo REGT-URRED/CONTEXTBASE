@@ -47,6 +47,65 @@ export async function runExtra(command, args, cwd) {
     return runSandboxCommand(args, cwd);
   }
 
+  if (command === 'doctor') {
+    // Verificacion con evidencia de la instalacion GLOBAL (config, plugin, esquema,
+    // skills y handshake MCP real). Exit 1 si alguna comprobacion de error falla.
+    const { runDoctor } = await import('./doctor.js');
+    const json = args.includes('--json');
+    const fix = args.includes('--fix');
+    const res = await runDoctor(cwd, { json, fix });
+    if (json) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      console.log('\nDiagnostico de ContextBase\n');
+      for (const c of res.checks) {
+        const marca = c.ok ? 'OK  ' : (c.severity === 'error' ? 'FALLA' : 'AVISO');
+        console.log('  [' + marca + '] ' + c.id.padEnd(24) + ' ' + c.detail);
+      }
+      const s = res.summary || {};
+      console.log('\nResumen: ' + (s.passed || 0) + '/' + (s.total || 0) + ' ok, ' + (s.failed || 0) + ' fallo(s), ' + (s.warnings || 0) + ' aviso(s) en ' + res.durationMs + ' ms');
+      if (res.fix && res.fix.attempted) console.log('Reparaciones aplicadas: ' + res.fix.actions.join(', '));
+    }
+    if (!res.ok) process.exitCode = 1;
+    return true;
+  }
+
+  if (command === 'verify') {
+    // Verificacion probabilistica del Arbitro sobre Happy Path y Unhappy Path:
+    // la puerta falla si hay un falso PASS o un falso FAIL.
+    const { simulateArbitration } = await import('./simulate.js');
+    const roundsArg = args.find((a) => a.startsWith('--rounds'));
+    let rounds;
+    if (roundsArg) {
+      const valor = roundsArg.includes('=') ? roundsArg.split('=')[1] : args[args.indexOf(roundsArg) + 1];
+      const n = Number(valor);
+      if (Number.isFinite(n) && n > 0) rounds = Math.floor(n);
+    }
+    const json = args.includes('--json');
+    const res = await simulateArbitration(rounds ? { rounds } : {});
+    if (json) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      console.log('\nVerificacion probabilistica del Arbitro (Happy / Unhappy Path)\n');
+      console.log('  ' + 'Escenario'.padEnd(30) + 'Tipo'.padEnd(10) + 'PASS'.padStart(6) + 'REFIX'.padStart(7) + 'RERUN'.padStart(7) + 'FAIL'.padStart(6) + '  passRate  intentos');
+      for (const sc of res.scenarios) {
+        const o = sc.outcomes || {};
+        console.log('  ' + String(sc.id).padEnd(30) + String(sc.kind).padEnd(10) +
+          String(o.PASS || 0).padStart(6) + String(o.REFIX || 0).padStart(7) +
+          String(o.RERUN || 0).padStart(7) + String(o.FAIL || 0).padStart(6) +
+          '  ' + String(sc.passRate).padEnd(9) + String(sc.meanAttempts));
+      }
+      const a = res.aggregate;
+      console.log('\n  Agregado: PASS ' + a.passRate + ' | REFIX ' + a.refixRate + ' | RERUN ' + a.rerunRate + ' | FAIL ' + a.failRate);
+      console.log('  Intentos medios: ' + a.expectedAttempts + ' | Falso PASS: ' + a.falsePassRate + ' | Falso FAIL: ' + a.falseFailRate);
+      console.log('  Paralelo: ' + res.parallel.workers + ' workers, ' + res.parallel.throughputRoundsPerSec + ' rondas/s, ' + res.durationMs + ' ms');
+      if (res.gate.ok) console.log('\n  PUERTA: OK (0 falsos PASS, 0 falsos FAIL)');
+      else console.log('\n  PUERTA: FALLA\n  - ' + res.gate.violations.join('\n  - '));
+    }
+    if (!res.gate.ok) process.exitCode = 1;
+    return true;
+  }
+
   if (command === 'agents') {
     return runAgentsCommand(args, cwd);
   }

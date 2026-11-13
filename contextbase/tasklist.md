@@ -5,6 +5,10 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] [2026-11-13] `contextbase doctor`: verificacion de la instalacion global con handshake MCP real y `--fix`
+- [x] [2026-11-13] `contextbase verify`: matriz probabilistica del Arbitro (Happy/Unhappy) con puerta de falsos PASS/FAIL y ejecucion en paralelo
+- [x] [2026-11-13] `docs/COMPATIBILIDAD-OPENCODE.md` con las lecciones de las rupturas y su verificacion
+- [x] [2026-11-13] Verificacion de paralelismo: escalado lineal de 1 a 8 Aranas con worktrees aislados
 - [x] [2026-11-13] Plugin de ContextBase con guard de instancia unica (global + proyecto en el mismo proceso ya no duplica hooks)
 - [x] [2026-11-13] Pulso EGM apuntado al documento de diseno mas reciente de `docs/` y blocker de `fundamentos.md` corregido
 - [x] [2026-11-13] Agente `gentle-orchestrator` en naranja (`#f59e0b`) en el config global, aplicado sin tocar el resto

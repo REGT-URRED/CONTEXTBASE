@@ -98,6 +98,8 @@ function showHelp() {
   console.log(`  ${c.cyan}egm${c.reset} review|drift|personas|standards|skills  Modelo Elephant-Goldfish: revisión, deriva doc-código y catálogo.`);
   console.log(`  ${c.cyan}sandbox${c.reset} run|list|apply|rm    Ejecuta operaciones delicadas sobre una copia aislada (contingencia).`);
   console.log(`  ${c.cyan}mission${c.reset}             Prompt de mision: orquestacion, ejecucion resiliente y testing.`);
+  console.log(`  ${c.cyan}doctor${c.reset} [--json] [--fix]  Verifica la instalacion global (config, plugin, esquema, skills y MCP real).`);
+  console.log(`  ${c.cyan}verify${c.reset} [--rounds=N] [--json]  Verificacion probabilistica del Arbitro (Happy/Unhappy Path, falsos PASS/FAIL).`);
   console.log(`  ${c.cyan}status --check${c.reset}        Exit 1 si hay brechas, informe vencido o reglas desactualizadas.`);
   console.log(`${c.bold}OPCIONES DE INIT:${c.reset}`);
   console.log(`  ${c.yellow}--force${c.reset}               Sobrescribe archivos existentes en contextbase/.`);

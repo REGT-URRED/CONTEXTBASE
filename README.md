@@ -76,6 +76,8 @@ contextbase status
 | **Windsurf** | `.windsurf/mcp.json` + `.windsurfrules` |
 | **Antigravity / Gemini CLI** | `AGENTS.md` + `.gemini/rules/contextbase.md` + Skill global |
 
+Las trampas concretas que ya rompieron el host (contrato del plugin, esquema v1/v2, doble instalación, instalación global verificable) están documentadas en [`docs/COMPATIBILIDAD-OPENCODE.md`](docs/COMPATIBILIDAD-OPENCODE.md) y se comprueban con `contextbase doctor`.
+
 ---
 
 ## Modelo EGM (Elephant-Goldfish) - revision adversarial determinista
