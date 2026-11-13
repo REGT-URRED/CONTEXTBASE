@@ -70,6 +70,12 @@ export function installSkill(target = 'global', projectDir = process.cwd(), cust
     // 2. OpenCode global (~/.config/opencode/skills)
     writeSkillsUnder(path.join(customHome, '.config', 'opencode', 'skills'));
 
+    // 2b. Hogar legacy de OpenCode 2.x (~/.opencode/skills) si existe: se mantiene
+    // sincronizado para que ninguna instalacion anterior quede con skills desfasadas.
+    if (fs.existsSync(path.join(customHome, '.opencode'))) {
+      writeSkillsUnder(path.join(customHome, '.opencode', 'skills'));
+    }
+
     // 3. Kilo Code global (~/.kilo/skills y ~/.config/kilo/skills si existe)
     writeSkillsUnder(path.join(customHome, '.kilo', 'skills'));
     if (fs.existsSync(path.join(customHome, '.config', 'kilo'))) {
