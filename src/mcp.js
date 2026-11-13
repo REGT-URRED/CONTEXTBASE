@@ -244,6 +244,16 @@ async function callTool(name, args = {}, projectDir) {
     const result = exp.exportCommand(projectDir, { type: type === 'digest' ? 'digest' : 'state', format, output });
     return JSON.stringify(result, null, 2);
   }
+  if (name === 'contextbase_egm_review') {
+    const egm = await import('./egm.js');
+    const action = String((args && args.action) || 'review');
+    if (action === 'personas') return JSON.stringify(egm.EGM_PERSONAS, null, 2);
+    if (action === 'standards') return JSON.stringify(egm.EGM_ESTANDARES, null, 2);
+    if (action === 'skills') return JSON.stringify(egm.EGM_SKILLS, null, 2);
+    if (action === 'drift') return JSON.stringify(await egm.egmDrift({ cwd: projectDir, docsDir: args.docs }), null, 2);
+    const res = await egm.egmReview({ cwd: projectDir, target: args.target || undefined, base: args.base || undefined });
+    return JSON.stringify(res, null, 2);
+  }
   if (name === 'contextbase_strands_prepare') {
     const strands = await import('./strands.js');
     const result = strands.prepareStrandsContext(projectDir);
@@ -373,10 +383,34 @@ async function callTool(name, args = {}, projectDir) {
 function reply(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 
 /**
+ * Captura lo que una tool imprima en stdout para que no contamine el stream JSON-RPC.
+ * Sin esto, una tool con console.log (audit, init, swarm_start) rompe el protocolo.
+ */
+async function withCapturedStdout(fn) {
+  const original = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk, ...rest) => {
+    captured += typeof chunk === 'string' ? chunk : String(chunk);
+    return true;
+  };
+  try {
+    const value = await fn();
+    return { value, captured };
+  } finally {
+    process.stdout.write = original;
+  }
+}
+
+/**
  * Servidor MCP sobre stdio (JSON-RPC 2.0, cero dependencias).
  * Cola secuencial FIFO para garantizar orden determinista de respuestas.
  */
+let serverActivo = false;
+
 export async function startMcpServer(projectDir = process.cwd()) {
+  // Dos interfaces readline sobre el mismo stdin duplicarian las respuestas.
+  if (serverActivo) return;
+  serverActivo = true;
   try { autoEnsure(projectDir); } catch {}
   let watcher = null;
   if (!process.env.NODE_TEST_CONTEXT) {
@@ -448,9 +482,10 @@ export async function startMcpServer(projectDir = process.cwd()) {
         const args = params?.arguments || {};
         try {
           try { autoEnsure(projectDir); } catch {}
-          const out = await callTool(name, args, projectDir);
+          const { value: out, captured } = await withCapturedStdout(() => callTool(name, args, projectDir));
           if (MUTATING_TOOLS.has(name)) { try { refreshStrands(projectDir); } catch {} }
-          return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: String(out) }] } });
+          const text = captured && typeof out === 'string' ? captured + out : String(out);
+          return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
         } catch (e) {
           return reply({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true } });
         }
@@ -467,6 +502,7 @@ export async function startMcpServer(projectDir = process.cwd()) {
     queue = queue.then(() => processLine(line)).catch(() => {});
   });
   await new Promise(resolve => rl.on('close', () => {
+    serverActivo = false;
     queue.finally(() => {
       if (watcher) { try { watcher.close(); } catch {} }
       resolve();

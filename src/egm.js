@@ -1,0 +1,1153 @@
+// Motor EGM (Elephant-Goldfish): revision determinista por severidad y convergencia.
+// No puntua: clasifica hallazgos por severidad y decide PASS/REFIX/RERUN/FAIL.
+// Cero dependencias y cero red: cada hallazgo cita evidencia leida del disco.
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const EGM_PERSONAS = [
+  {
+    id: 'egm-zoom-out',
+    nombre: 'Zoom Out',
+    mision: 'Cuestionar el alcance antes del detalle: YAGNI, reuso real, anti-weeds y causa raiz.',
+    dimensiones: ['alcance', 'yagni', 'reuso', 'causa-raiz'],
+    estandar: 'zoom-out-standard',
+    modo: 'REVIEW',
+    artefacto: 'informe de alcance con weeds, causa raiz y oportunidades de reuso',
+    criterio_pass: 'El alcance es el minimo que el objetivo exige, cada supuesto tiene causa raiz y nada se reimplementa lo que ya existe.',
+  },
+  {
+    id: 'egm-inventive-catalyst',
+    nombre: 'Inventive Catalyst',
+    mision: 'Romper los falsos compromisos: contradicciones, promesas excluyentes y TRIZ sobre el problema real.',
+    dimensiones: ['contradiccion', 'falso-compromiso', 'triz'],
+    estandar: 'heilmeier-standard',
+    modo: 'BRAINSTORM',
+    artefacto: 'catalogo de contradicciones y de compromisos que hay que elegir',
+    criterio_pass: 'Ningun compromiso promete dos propiedades excluyentes a la vez y toda contradiccion tiene resolucion o escala.',
+  },
+  {
+    id: 'egm-codebase-details',
+    nombre: 'Codebase Details',
+    mision: 'Verificar que el doc coincida con el codigo: referencias, supuestos declarados y casos borde.',
+    dimensiones: ['referencias', 'supuestos', 'casos-borde'],
+    estandar: 're-implementation-standard',
+    modo: 'REVIEW',
+    artefacto: 'hallazgos de referencias rotas y supuestos no declarados',
+    criterio_pass: 'Cada ruta citada existe en el proyecto o esta declarada como pendiente, y ningun supuesto queda implicito.',
+  },
+  {
+    id: 'egm-comprehension',
+    nombre: 'Comprehension',
+    mision: 'Exigir auto-contenido: terminos definidos, prerrequisitos declarados y flujo preciso.',
+    dimensiones: ['terminos', 'prerrequisitos', 'flujo'],
+    estandar: 'zoom-out-standard',
+    modo: 'REVIEW',
+    artefacto: 'lista de terminos sin definir y de vaguedades de flujo',
+    criterio_pass: 'Un lector sin contexto previo entiende que hace cada parte, que significa cada termino y que pasos siguen.',
+  },
+  {
+    id: 'egm-design',
+    nombre: 'Design',
+    mision: 'Forzar el diseño explicito: alternativas obligatorias, riesgos con mitigacion y preguntas nucleo respondidas.',
+    dimensiones: ['alternativas', 'riesgos', 'preguntas-nucleo'],
+    estandar: 'feature-spec-standard',
+    modo: 'REVIEW',
+    artefacto: 'seccion de alternativas y seccion de riesgos con mitigaciones',
+    criterio_pass: 'El doc compara al menos dos alternativas, nombra riesgos con su mitigacion y responde las preguntas nucleo.',
+  },
+  {
+    id: 'egm-structural',
+    nombre: 'Structural',
+    mision: 'Validar la estructura del documento: jerarquia de titulos, secciones obligatorias, tablas y bloques de codigo.',
+    dimensiones: ['jerarquia', 'secciones', 'tablas', 'codigo'],
+    estandar: 'feature-spec-standard',
+    modo: 'REVIEW',
+    artefacto: 'informe de estructura con jerarquia y secciones obligatorias',
+    criterio_pass: 'La jerarquia de titulos no tiene saltos, las secciones obligatorias estan presentes y las tablas y bloques de codigo estan bien formados.',
+  },
+  {
+    id: 'egm-style',
+    nombre: 'Style',
+    mision: 'Limpiar la prosa: hype, relleno, jargon y claims sin calibrar.',
+    dimensiones: ['hype', 'relleno', 'jargon', 'claims'],
+    estandar: 'feature-spec-standard',
+    modo: 'REVIEW',
+    artefacto: 'hallazgos de prosa con accion DROP/CALIBRATE/RELOCATE/KEEP',
+    criterio_pass: 'No hay hype ni relleno y todo claim universal trae su evidencia al lado.',
+  },
+  {
+    id: 'egm-implementation-readiness',
+    nombre: 'Implementation Readiness',
+    mision: 'Comprobar que el doc se pueda implementar sin decidir nada: fases, file boundary y plan de pruebas.',
+    dimensiones: ['decisiones-abiertas', 'fases', 'file-boundary', 'test-plan'],
+    estandar: 'implementation-readiness-standard',
+    modo: 'REVIEW',
+    artefacto: 'hallazgos de readiness y de decisiones abiertas',
+    criterio_pass: 'No queda ninguna decision abierta, el alcance por archivo esta declarado y existe un plan de pruebas.',
+  },
+  {
+    id: 'egm-synthesizer',
+    nombre: 'Synthesizer',
+    mision: 'Consolidar lo revisado: deduplicar, agregar severidades y fijar el veredicto.',
+    dimensiones: ['dedup', 'severidad', 'trazabilidad'],
+    estandar: 'heilmeier-standard',
+    modo: 'REVIEW',
+    artefacto: 'breakdown blocker/major/nit y veredicto con trazabilidad al id de cada hallazgo',
+    criterio_pass: 'Cada hallazgo conserva su id y su evidencia, no hay duplicados y la severidad agregada es coherente.',
+  },
+  {
+    id: 'egm-bootstrap-orchestrator',
+    nombre: 'Bootstrap Orchestrator',
+    mision: 'Orquestar el arranque por directorio: contrato de cada carpeta y README estilo Peanuts/Hay.',
+    dimensiones: ['contrato', 'readme', 'arranque'],
+    estandar: 'implementation-readiness-standard',
+    modo: 'REVIEW',
+    artefacto: 'contrato por directorio y README de entrada',
+    criterio_pass: 'Cada directorio declara su contrato y el README permite arrancar sin leer el codigo.',
+  },
+];
+
+export const EGM_ESTANDARES = [
+  {
+    id: 'feature-spec-standard',
+    nombre: 'Feature Spec Standard',
+    reglas: [
+      'La seccion de alternativas es obligatoria: comparar al menos dos opciones y dejar constancia de la elegida.',
+      'La seccion de riesgos es obligatoria y cada riesgo lleva su mitigacion.',
+      'Las secciones obligatorias (contexto, alcance, pruebas) no se omiten aunque el equipo las considere obvias.',
+      'La prosa no usa hype ni claims sin evidencia.',
+    ],
+    aceptacion: 'El doc enumera alternativas con su descarte, riesgos con mitigacion y las secciones obligatorias presentes.',
+  },
+  {
+    id: 'heilmeier-standard',
+    nombre: 'Heilmeier Standard',
+    reglas: [
+      'Cual es el objetivo y por que importa.',
+      'Como se sabe cuando el trabajo esta terminado.',
+      'Que es diferente respecto de lo que ya existe.',
+      'Que es lo mas dificil del problema.',
+      'Que forma tiene la respuesta mas simple que funcionaria.',
+      'Que skills, recursos o conocimiento hacen falta.',
+      'Cuanto costara en tiempo y en esfuerzo.',
+      'Que riesgos hay y cual es el plan si el riesgo se materializa.',
+    ],
+    aceptacion: 'Las ocho preguntas del catecismo estan respondidas en el documento y ninguna se responde con un supuesto.',
+  },
+  {
+    id: 'implementation-readiness-standard',
+    nombre: 'Implementation Readiness Standard',
+    reglas: [
+      'Regla Zero-Decision: ninguna decision queda abierta para quien implemente.',
+      'Las fases van numeradas y cada una tiene un resultado verificable.',
+      'File boundary declarado: que archivos se tocan y cuales no.',
+      'Plan de pruebas explicito con casos asociados a cada fase.',
+    ],
+    aceptacion: 'Un implementador puede trabajar sin preguntar nada y sabe que archivos puede tocar y como se verifica.',
+  },
+  {
+    id: 're-implementation-standard',
+    nombre: 'Re-Implementation Standard',
+    reglas: [
+      'Regla Zero-Assumption: nada se da por supuesto, cada default implicito se declara.',
+      'Cada referencia a un archivo del proyecto se verifica contra el disco.',
+      'Los casos borde se enumeran, no se insinuan.',
+      'Los supuestos del entorno (versiones, permisos, datos) van escritos.',
+    ],
+    aceptacion: 'Reimplementar desde el doc reproduce el mismo resultado sin acceso al historial ni a la conversacion original.',
+  },
+  {
+    id: 'zoom-out-standard',
+    nombre: 'Zoom Out Standard',
+    reglas: [
+      'Suficiencia de contexto: quien lee sin historial entiende el problema.',
+      'Causa raiz: se ataca el origen, no el sintoma.',
+      'YAGNI: solo lo que el objetivo exige, sin developmentally provisions.',
+      'Leverage existing: reusar lo que ya existe antes de escribir algo nuevo.',
+    ],
+    aceptacion: 'El alcance esta justificado por el objetivo, cada parte tiene causa raiz y no se duplica capacidad existente.',
+  },
+];
+
+export const EGM_SKILLS = [
+  {
+    id: 'egm-brainstorm',
+    nombre: 'EGM Brainstorm',
+    proposito: 'Abrir el problema con el catalogo de contradicciones antes de escribir nada.',
+    trigger: 'Idea nueva, requisito ambiguo o "no se por donde empezar".',
+    entradas: ['objetivo en lenguaje humano', 'contexto del repositorio'],
+    salida: 'contradicciones detectadas, alternativas y preguntas a responder',
+    personas: ['egm-inventive-catalyst', 'egm-zoom-out', 'egm-design'],
+  },
+  {
+    id: 'egm-draft',
+    nombre: 'EGM Draft',
+    proposito: 'Redactar la especificacion con las secciones obligatorias ya decididas.',
+    trigger: 'Alternativas y riesgos ya resueltos, listo para documentar.',
+    entradas: ['salida de egm-brainstorm', 'referencias verificadas del codigo'],
+    salida: 'documento con contexto, alcance, alternativas, riesgos, fases y pruebas',
+    personas: ['egm-design', 'egm-structural', 'egm-codebase-details', 'egm-style'],
+  },
+  {
+    id: 'egm-review',
+    nombre: 'EGM Review',
+    proposito: 'Pasar el motor determinista sobre un documento y emitir PASS/REFIX/RERUN/FAIL.',
+    trigger: 'Documento drafted que necesita veredicto antes de avanzar.',
+    entradas: ['ruta del documento', 'raiz del proyecto'],
+    salida: 'goldfish_review_report.md con hallazgos por severidad y veredicto',
+    personas: ['egm-structural', 'egm-style', 'egm-comprehension', 'egm-design', 'egm-codebase-details', 'egm-zoom-out', 'egm-inventive-catalyst', 'egm-synthesizer'],
+  },
+  {
+    id: 'egm-review-loop',
+    nombre: 'EGM Review Loop',
+    proposito: 'Iterar rondas de revision hasta la convergencia o el cap, con deteccion de churn.',
+    trigger: 'Primer veredicto REFIX con hallazgos abiertos.',
+    entradas: ['rondas de egm-review', 'hallazgos corregidos'],
+    salida: 'convergencia alcanzada o escalado al humano',
+    personas: ['egm-synthesizer', 'egm-design'],
+  },
+  {
+    id: 'egm-resolve',
+    nombre: 'EGM Resolve',
+    proposito: 'Resolver cada hallazgo con la evidencia leida y dejar el estado al dia.',
+    trigger: 'Hallazgo abierto con evidencia suficiente para decidir.',
+    entradas: ['hallazgo con id estable', 'evidencia citada'],
+    salida: 'hallazgo en estado fixed o settled con resolucion contest/escalate/propose_fix/decline',
+    personas: ['egm-codebase-details', 'egm-synthesizer'],
+  },
+  {
+    id: 'egm-drift-report',
+    nombre: 'EGM Drift Report',
+    proposito: 'Comparar la documentacion contra el codigo y clasificar la diferencia.',
+    trigger: 'Cambio en el codigo que no se reflejo en los docs.',
+    entradas: ['directorio de docs', 'raiz del proyecto'],
+    salida: 'informe de drift con missing_feature, incomplete_model, logic_shortcut o architectural_divergence',
+    personas: ['egm-codebase-details', 'egm-synthesizer'],
+  },
+  {
+    id: 'egm-bootstrap',
+    nombre: 'EGM Bootstrap',
+    proposito: 'Preparar un directorio nuevo con su contrato y un README de entrada.',
+    trigger: 'Directorio nuevo o modulo que entra al alcance.',
+    entradas: ['nombre del directorio', 'objetivo del directorio'],
+    salida: 'contrato por directorio y README estilo Peanuts/Hay',
+    personas: ['egm-bootstrap-orchestrator', 'egm-comprehension', 'egm-design'],
+  },
+];
+
+export const EGM_SEVERIDADES = {
+  blocker: {
+    descripcion: 'El doc afirma algo falso, contradice el codigo o deja una ambiguedad irresoluble.',
+    bloquea: true,
+  },
+  major: {
+    descripcion: 'Halla una brecha contra el estandar aplicado.',
+    bloquea: true,
+  },
+  nit: {
+    descripcion: 'Halla cosmetico: no bloquea la revision.',
+    bloquea: false,
+  },
+};
+
+export const EGM_SEVERIDAD_ORDEN = ['blocker', 'major', 'nit'];
+
+export const EGM_RESOLUCIONES = {
+  contest: {
+    descripcion: 'Hallazgo invalido: debe citar la evidencia leida que lo refuta.',
+    reabre: false,
+  },
+  escalate: {
+    descripcion: 'La evidencia esta fuera del alcance: decide un humano.',
+    reabre: false,
+  },
+  propose_fix: {
+    descripcion: 'Hallazgo valido: se propone un reemplazo preciso.',
+    reabre: true,
+  },
+  decline: {
+    descripcion: 'Nit registrado y no corregido.',
+    reabre: false,
+  },
+};
+
+// Escala de accion del revisor de estilo: que hacer con el texto marcado.
+export const EGM_ACCIONES_ESTILO = ['DROP', 'CALIBRATE', 'RELOCATE', 'KEEP'];
+
+export const EGM_MAX_RONDAS = 5;
+
+// Espejo de las reglas de prosa de src/slop.js: ese modulo solo expone scan() sobre diffs de git,
+// asi que aqui se replican los mismos patrones para poder revisar un archivo suelto.
+const SLOP_PROSA = [
+  { id: 'banned-word', severity: 'major', accion: 'DROP', detalle: 'palabra de relleno o marketing IA', re: /\b(seamless(ly)?|leverage|leveraging|robust|cutting-edge|world-class|game-?changer|unlock|empower|elevate|delve|tapestry|myriad|pivotal|meticulous|intricate|testament to|in today'?s fast-paced|revolutioni[sz]e)\b/i },
+  { id: 'not-x-but-y', severity: 'nit', accion: 'DROP', detalle: 'construccion contrastiva de relleno', re: /\bnot\s+[a-z][\w\s-]{0,30}\bbut\b/i },
+  { id: 'dash-density', severity: 'nit', accion: 'DROP', detalle: 'dos o mas guiones largos en una linea', re: /\u2014/g },
+  { id: 'bold-label', severity: 'nit', accion: 'DROP', detalle: 'etiqueta en negrita tipo informe IA', re: /\*\*[^*\n]{2,40}\*\*\s*:/ },
+];
+
+const HYPE = ['robusto', 'seamless', 'delve', 'tapestry', 'leverage', 'cutting-edge', 'world-class'];
+const CLAIM_FUERTE = /\b(siempre|nunca|jamas|jam[aá]s|garantiza\w*|100\s?%)\b/i;
+const CLAIM_DEBIL = /\btodos\b/i;
+const EVIDENCIA = /\d|%|benchmark|prueba|test|mide|medici[oó]n|medido|medicion/i;
+const ACRONIMOS = new Set(['API', 'URL', 'URI', 'HTTP', 'HTTPS', 'JSON', 'YAML', 'CLI', 'ID', 'OK', 'OS', 'DB', 'SQL', 'CSS', 'HTML', 'JS', 'TS', 'MCP', 'LLM', 'AI', 'UI', 'UX', 'CI', 'CD', 'IO', 'PR', 'RPC', 'TCP', 'UDP', 'GDPR', 'SLA', 'SLO', 'UUID', 'SHA', 'MD', 'PDF', 'CSV', 'TXT', 'XML', 'QA', 'EGM', 'H1', 'H2', 'H3']);
+
+const CODE_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|ps1|css|scss|less|html|vue|svelte)$/i;
+const PATH_RE = /(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/g;
+// Copia sin flag global: RegExp con /g es stateful y .test() avanza lastIndex.
+const PATH_ANY = /(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/;
+const CREATION = /\b(create|creating|modify|modifying|delete|deleting|new|nuevo|nueva|crear|creara|creará|creacion|creación|agregar|agrega|anadir|añadir|pendiente|renombrar|eliminar|to\s+create)\b/i;
+const DECISION = /\b(TODO|TBD|FIXME|XXX)\b|por\s+definir|por\s+decidir|a\s+definir/i;
+const VAGUE = /\b(el|este|ese)\s+(sistema|c[oó]digo|proyecto|m[oó]dulo|servicio)\b/i;
+const EXCLUSIVO = new Set([
+  'rapido|simple', 'simple|rapido',
+  'flexible|estricto', 'estricto|flexible',
+  'seguro|barato', 'barato|seguro',
+  'rapido|seguro', 'seguro|rapido',
+  'ligero|poderoso', 'poderoso|ligero',
+  'minimo|maximo', 'maximo|minimo',
+  'perfecto|real', 'real|perfecto',
+]);
+const OVER_ENGINEERING = ['en el futuro', 'podemos agregar', 'por si acaso', 'para escalar', 'placeholder', 'todo futuro'];
+const TECHOS = ['express', 'react', 'vue', 'angular', 'svelte', 'sqlite', 'postgres', 'postgresql', 'mysql', 'mongodb', 'redis', 'docker', 'kubernetes', 'graphql', 'rest', 'grpc', 'websocket', 'terraform', 'ansible', 'django', 'fastify', 'nestjs', 'prisma', 'sequelize'];
+
+// ---------- utilidades ----------
+
+function deaccent(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function snippet(text, max = 160) {
+  return String(text || '').trim().replace(/\s+/g, ' ').slice(0, max);
+}
+
+function stripUrls(text) {
+  return String(text || '').replace(/https?:\/\/\S+/gi, ' ');
+}
+
+function walk(dir) {
+  const out = [];
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    if (e.name === 'node_modules' || e.name === '.git') continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...walk(full));
+    else if (e.isFile()) out.push(full);
+  }
+  return out;
+}
+
+function splitLines(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const t = raw.trim();
+    const m = t.match(/^(`{3,}|~{3,})/);
+    if (fence) {
+      out.push({ n: i + 1, text: raw, code: true });
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (m) { fence = m[1]; out.push({ n: i + 1, text: raw, code: true }); continue; }
+    out.push({ n: i + 1, text: raw, code: false });
+  }
+  return out;
+}
+
+function proseOf(lines) {
+  return lines.filter(l => !l.code).map(l => ({ n: l.n, text: l.text.replace(/`[^`]*`/g, '') }));
+}
+
+function headingsOf(lines) {
+  const out = [];
+  for (const l of lines) {
+    if (l.code) continue;
+    const m = l.text.match(/^(#{1,6})\s+(.*)$/);
+    if (m) out.push({ level: m[1].length, title: m[2].trim(), n: l.n });
+  }
+  return out;
+}
+
+function sectionsOf(lines, headings) {
+  const out = [];
+  for (let i = 0; i < headings.length; i++) {
+    const start = headings[i].n;
+    const end = i + 1 < headings.length ? headings[i + 1].n - 1 : lines.length;
+    const body = lines.filter(l => !l.code && l.n > start && l.n <= end).map(l => l.text.trim()).filter(Boolean);
+    out.push({ level: headings[i].level, title: headings[i].title, n: start, body });
+  }
+  return out;
+}
+
+// ---------- ids estables ----------
+
+// El id se deriva de persona+dimension+scope: el mismo hallazgo conserva su id entre rondas y procesos.
+const ID_ASSIGNED = new Map();
+
+function hash32(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function stableId(persona, dimension, scope) {
+  const key = persona + '|' + dimension + '|' + scope;
+  if (ID_ASSIGNED.has(key)) return ID_ASSIGNED.get(key);
+  let n = hash32(key) % 10000 + 1;
+  const taken = new Set(ID_ASSIGNED.values());
+  while (taken.has(persona + '-' + n)) n = (n % 10000) + 1;
+  const id = persona + '-' + n;
+  ID_ASSIGNED.set(key, id);
+  return id;
+}
+
+function mk(persona, severity, dimension, scope, detail, evidence, resolution) {
+  return {
+    id: stableId(persona, dimension, scope),
+    persona,
+    severity,
+    dimension,
+    scope,
+    detail,
+    evidence: evidence || '',
+    resolution: resolution || (severity === 'nit' ? 'decline' : 'propose_fix'),
+    status: 'open',
+  };
+}
+
+// ---------- contexto ----------
+
+function readTarget(root, target) {
+  const file = path.resolve(root, String(target || ''));
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return { ok: false, file, reason: 'El objetivo no es un archivo: ' + file };
+    const text = fs.readFileSync(file, 'utf8');
+    return { ok: true, file, text, rel: path.relative(root, file).replace(/\\/g, '/') };
+  } catch (e) {
+    return { ok: false, file, reason: 'No se pudo leer el objetivo "' + String(target || '') + '": ' + (e && e.message ? e.message : e) };
+  }
+}
+
+function buildContext(root, read) {
+  const lines = splitLines(read.text);
+  const headings = headingsOf(lines);
+  return {
+    root,
+    file: read.file,
+    rel: read.rel,
+    text: read.text,
+    lines,
+    prose: proseOf(lines),
+    headings,
+    sections: sectionsOf(lines, headings),
+    isMd: /\.md$/i.test(read.file),
+  };
+}
+
+// ---------- checkers deterministas ----------
+
+function checkStructural(ctx) {
+  if (!ctx.isMd) return { persona: 'egm-structural', status: 'not run', findings: [] };
+  const out = [];
+  const hs = ctx.headings;
+  const h1 = hs.filter(h => h.level === 1);
+  if (h1.length === 0) {
+    out.push(mk('egm-structural', 'major', 'jerarquia', 'structure:h1', 'El documento no tiene titulo H1.', 'headings encontrados: ' + hs.length, 'propose_fix'));
+  } else if (h1.length > 1) {
+    out.push(mk('egm-structural', 'major', 'jerarquia', 'structure:h1', 'El documento tiene ' + h1.length + ' titulos H1; debe tener exactamente uno.', 'lineas H1: ' + h1.map(x => x.n).join(', '), 'propose_fix'));
+  }
+  let prev = 0;
+  for (const h of hs) {
+    if (prev && h.level > prev + 1) {
+      out.push(mk('egm-structural', 'major', 'jerarquia', 'structure:jump:' + prev + '-' + h.level, 'Salto de jerarquia de titulos: H' + prev + ' a H' + h.level + ' en "' + h.title + '".', 'linea ' + h.n, 'propose_fix'));
+    }
+    prev = h.level;
+  }
+  const fences = ctx.lines.filter(l => l.code && /^\s*(`{3,}|~{3,})/.test(l.text)).length;
+  if (fences % 2 !== 0) {
+    out.push(mk('egm-structural', 'major', 'codigo', 'structure:fence', 'Hay un bloque de codigo delimitado sin cerrar.', 'delimitadores encontrados: ' + fences, 'propose_fix'));
+  }
+  for (const bad of tableProblems(ctx.lines)) {
+    out.push(mk('egm-structural', 'major', 'tablas', 'structure:table:' + bad.line, bad.detail, 'linea ' + bad.line, 'propose_fix'));
+  }
+  if (hs.length >= 3 && !hs.some(h => /contexto|objetivo|proposito|resumen|alcance/i.test(h.title))) {
+    out.push(mk('egm-structural', 'major', 'secciones', 'structure:contexto', 'Falta la seccion de contexto, objetivo o alcance que exige el estandar.', 'headings: ' + hs.map(h => h.title).join(' | '), 'propose_fix'));
+  }
+  return { persona: 'egm-structural', status: 'completed', findings: out };
+}
+
+function tableProblems(lines) {
+  const problems = [];
+  let group = [];
+  const flush = () => {
+    if (group.length >= 2) {
+      const rows = group.map(l => l.text.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim()));
+      const sep = rows[1] || [];
+      if (!sep.length || !sep.every(c => /^:?-{2,}:?$/.test(c))) {
+        problems.push({ line: group[1].n, detail: 'La tabla no tiene fila separadora valida.' });
+      }
+      const widths = new Set(rows.map(r => r.length));
+      if (widths.size > 1) {
+        problems.push({ line: group[0].n, detail: 'La tabla tiene filas con distinto numero de columnas.' });
+      }
+    }
+    group = [];
+  };
+  for (const l of lines) {
+    const t = l.text.trim();
+    if (!l.code && /^\|.*\|$/.test(t)) group.push(l);
+    else flush();
+  }
+  flush();
+  return problems;
+}
+
+function checkStyle(ctx) {
+  if (!ctx.isMd) return { persona: 'egm-style', status: 'not run', findings: [] };
+  const out = [];
+  for (const l of ctx.prose) {
+    const plain = l.text;
+    const flat = deaccent(plain).toLowerCase();
+    const hypeWords = new Set();
+    for (const word of HYPE) {
+      const re = new RegExp('\\b' + deaccent(word).toLowerCase() + '\\w*', 'i');
+      const m = plain.match(re);
+      if (!m) continue;
+      hypeWords.add(m[0].toLowerCase());
+      const compound = m[0].length > word.length;
+      out.push(mk('egm-style', compound ? 'nit' : 'major', 'hype', 'style:hype:' + m[0].toLowerCase(),
+        '[' + (compound ? 'KEEP' : 'DROP') + '] Hype de marketing en la prosa: "' + m[0] + '".',
+        'linea ' + l.n + ': ' + snippet(plain), compound ? 'decline' : 'propose_fix'));
+    }
+    for (const rule of SLOP_PROSA) {
+      const m = plain.match(rule.re);
+      if (!m) continue;
+      if (rule.id === 'banned-word' && hypeWords.has(m[0].toLowerCase())) continue;
+      const count = rule.id === 'dash-density' ? (plain.match(/\u2014/g) || []).length : 1;
+      out.push(mk('egm-style', rule.severity, 'relleno', 'style:' + rule.id + ':' + m[0].toLowerCase().trim(),
+        '[' + rule.accion + '] ' + rule.detalle + ' ("' + snippet(m[0]) + '").',
+        'linea ' + l.n + ': ' + snippet(plain) + (count > 1 ? ' (' + count + ' guiones)' : ''), rule.severity === 'nit' ? 'decline' : 'propose_fix'));
+    }
+    if (CLAIM_FUERTE.test(flat) && !EVIDENCIA.test(plain)) {
+      const m = flat.match(CLAIM_FUERTE);
+      out.push(mk('egm-style', 'major', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Claim universal sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'propose_fix'));
+    } else if (CLAIM_DEBIL.test(flat) && !EVIDENCIA.test(plain)) {
+      const m = flat.match(CLAIM_DEBIL);
+      out.push(mk('egm-style', 'nit', 'claims', 'style:claim:' + m[0], '[CALIBRATE] Cuantificador sin evidencia: "' + snippet(m[0]) + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline'));
+    }
+    const acro = plain.match(/\b[A-Z]{2,}\b/g);
+    if (acro) {
+      for (const a of new Set(acro)) {
+        if (ACRONIMOS.has(a)) continue;
+        out.push(mk('egm-style', 'nit', 'jargon', 'style:jargon:' + a, '[CALIBRATE] Sigla sin explicar: "' + a + '".', 'linea ' + l.n + ': ' + snippet(plain), 'decline'));
+      }
+    }
+  }
+  return { persona: 'egm-style', status: 'completed', findings: out };
+}
+
+function checkComprehension(ctx) {
+  if (!ctx.isMd) return { persona: 'egm-comprehension', status: 'not run', findings: [] };
+  const out = [];
+  const terms = new Map();
+  for (const l of ctx.lines) {
+    if (l.code) continue;
+    const re = /`([A-Za-z_][A-Za-z0-9_]*)`/g;
+    let m;
+    while ((m = re.exec(l.text))) {
+      if (!terms.has(m[1])) terms.set(m[1], { n: l.n, text: l.text });
+    }
+  }
+  for (const [term, def] of terms) {
+    const re = new RegExp('\\b' + term + '\\b', 'i');
+    for (const l of ctx.prose) {
+      if (l.n >= def.n) break;
+      if (re.test(l.text)) {
+        out.push(mk('egm-comprehension', 'major', 'terminos', 'term:' + term,
+          'El termino "' + term + '" se usa antes de definirse.',
+          'uso en linea ' + l.n + ', definicion en linea ' + def.n, 'propose_fix'));
+        break;
+      }
+    }
+  }
+  for (const l of ctx.prose) {
+    const m = l.text.match(VAGUE);
+    if (!m) continue;
+    if (PATH_ANY.test(l.text)) continue;
+    out.push(mk('egm-comprehension', 'nit', 'flujo', 'vague:' + m[0].toLowerCase(),
+      '[RELOCATE] Referencia generica sin ruta: "' + snippet(m[0]) + '".',
+      'linea ' + l.n + ': ' + snippet(l.text), 'decline'));
+  }
+  for (const s of ctx.sections) {
+    if (s.level === 1) continue;
+    if (s.body.length < 2) {
+      out.push(mk('egm-comprehension', 'nit', 'flujo', 'short:' + s.title,
+        'La seccion "' + s.title + '" tiene ' + s.body.length + ' linea(s) de cuerpo; queda vaga.',
+        'linea ' + s.n, 'decline'));
+    }
+  }
+  return { persona: 'egm-comprehension', status: 'completed', findings: out };
+}
+
+function checkImplementationReadiness(ctx) {
+  if (!ctx.isMd) return { persona: 'egm-implementation-readiness', status: 'not run', findings: [] };
+  const out = [];
+  for (const l of ctx.lines) {
+    if (l.code) continue;
+    const m = l.text.match(DECISION);
+    if (!m) continue;
+    out.push(mk('egm-implementation-readiness', 'major', 'decisiones-abiertas', 'marker:' + m[0].toLowerCase().trim(),
+      'Decision abierta en el documento ("' + snippet(m[0]) + '"); la regla Zero-Decision lo impide.',
+      'linea ' + l.n + ': ' + snippet(l.text), 'propose_fix'));
+  }
+  for (const s of ctx.sections) {
+    if (!/plan|fase|implementa|hito/i.test(s.title)) continue;
+    for (const line of s.body) {
+      if (!/[¿?]/.test(line) || !/\?\s*$/.test(line)) continue;
+      out.push(mk('egm-implementation-readiness', 'major', 'decisiones-abiertas', 'question:' + snippet(line, 40),
+        'Pregunta sin responder en la seccion "' + s.title + '".',
+        'linea ' + s.n + ': ' + snippet(line), 'propose_fix'));
+    }
+  }
+  const mentionsTests = /\b(test|pruebas?|QA)\b/i.test(ctx.text);
+  const hasTestSection = ctx.headings.some(h => /prueba|test|qa/i.test(h.title));
+  if (mentionsTests && !hasTestSection) {
+    out.push(mk('egm-implementation-readiness', 'major', 'test-plan', 'tests:missing',
+      'El documento menciona pruebas pero no tiene seccion de plan de pruebas.',
+      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix'));
+  }
+  const hasImplSection = ctx.headings.some(h => /implementa|fase|hito/i.test(h.title));
+  if (hasImplSection && !/archivo|file/i.test(ctx.text)) {
+    out.push(mk('egm-implementation-readiness', 'major', 'file-boundary', 'file-boundary:missing',
+      'Hay seccion de implementacion sin file boundary declarado (que archivos se tocan).',
+      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix'));
+  }
+  return { persona: 'egm-implementation-readiness', status: 'completed', findings: out };
+}
+
+function checkDesign(ctx) {
+  if (!ctx.isMd) return { persona: 'egm-design', status: 'not run', findings: [] };
+  const out = [];
+  if (ctx.headings.length < 3) return { persona: 'egm-design', status: 'completed', findings: out };
+  if (!ctx.headings.some(h => /alternativ/i.test(h.title))) {
+    out.push(mk('egm-design', 'major', 'alternativas', 'section:alternativas',
+      'Falta la seccion de alternativas exigida por el estandar.',
+      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix'));
+  }
+  if (!ctx.headings.some(h => /riesgo|mitigaci/i.test(h.title))) {
+    out.push(mk('egm-design', 'major', 'riesgos', 'section:riesgos',
+      'Falta la seccion de riesgos con mitigacion exigida por el estandar.',
+      'headings: ' + ctx.headings.map(h => h.title).join(' | '), 'propose_fix'));
+  }
+  return { persona: 'egm-design', status: 'completed', findings: out };
+}
+
+function checkCodebaseDetails(ctx) {
+  const out = [];
+  const occ = new Map();
+  for (const l of ctx.lines) {
+    if (l.code) continue;
+    const clean = stripUrls(l.text);
+    const matches = clean.match(PATH_RE) || [];
+    for (const raw of matches) {
+      const ref = raw.replace(/[.,;:)]+$/, '');
+      if (!occ.has(ref)) occ.set(ref, []);
+      occ.get(ref).push({ n: l.n, text: l.text, creation: CREATION.test(l.text) });
+    }
+  }
+  for (const [ref, list] of occ) {
+    if (ref.endsWith('/')) continue;
+    if (list.every(o => o.creation)) continue;
+    if (fs.existsSync(path.join(ctx.root, ref))) continue;
+    const first = list.find(o => !o.creation);
+    out.push(mk('egm-codebase-details', 'blocker', 'referencias', 'ref:' + ref,
+      'El documento da por existente "' + ref + '" pero ese archivo no existe en el proyecto.',
+      'linea ' + first.n + ': ' + snippet(first.text), 'propose_fix'));
+  }
+  return { persona: 'egm-codebase-details', status: 'completed', findings: out };
+}
+
+function checkZoomOut(ctx) {
+  const out = [];
+  const hits = [];
+  for (const l of ctx.prose) {
+    const flat = deaccent(l.text).toLowerCase();
+    for (const s of OVER_ENGINEERING) {
+      if (flat.includes(s)) hits.push({ s, n: l.n, text: l.text });
+    }
+  }
+  const distinct = [...new Set(hits.map(h => h.s))];
+  for (const s of distinct) {
+    const first = hits.find(h => h.s === s);
+    out.push(mk('egm-zoom-out', 'nit', 'sobre-ingenieria', 'overengineering:' + s,
+      'Senal de sobre-ingenieria ("' + s + '") sin necesidad demostrada (YAGNI).',
+      'linea ' + first.n + ': ' + snippet(first.text), 'decline'));
+  }
+  if (distinct.length >= 3) {
+    out.push(mk('egm-zoom-out', 'major', 'sobre-ingenieria', 'overengineering:global',
+      'Sobre-ingenieria sistematica: ' + distinct.length + ' senales de alcance futuro en el mismo documento.',
+      'senales: ' + distinct.join(', '), 'propose_fix'));
+  }
+  for (const name of proposedHelpers(ctx)) {
+    const existing = findExistingHelper(ctx.root, name);
+    if (!existing) continue;
+    out.push(mk('egm-zoom-out', 'major', 'reuso', 'reuse:' + name,
+      'El documento propone el helper "' + name + '" pero ya existe en el proyecto.',
+      'helper existente: ' + existing, 'propose_fix'));
+  }
+  return { persona: 'egm-zoom-out', status: 'completed', findings: out };
+}
+
+function proposedHelpers(ctx) {
+  const out = new Set();
+  for (const l of ctx.prose) {
+    if (!/\b(nuev[oa]s?|crea\w*|agrega\w*|helper\w*|utilidad\w*|funci[oó]n\w*)/i.test(l.text)) continue;
+    const matches = l.text.match(/`([A-Za-z_][A-Za-z0-9_]*)`/g) || [];
+    for (const raw of matches) {
+      const name = raw.replace(/`/g, '');
+      if (name.length > 2) out.add(name);
+    }
+  }
+  return [...out];
+}
+
+function findExistingHelper(root, name) {
+  const srcDir = path.join(root, 'src');
+  if (!fs.existsSync(srcDir)) return null;
+  const re = new RegExp('(?:export\\s+(?:async\\s+)?function\\s+' + name + '\\b|export\\s+const\\s+' + name + '\\b|(?:const|let|var|function)\\s+' + name + '\\b)');
+  for (const f of walk(srcDir)) {
+    if (!CODE_EXT.test(f)) continue;
+    let text = '';
+    try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
+    if (re.test(text)) return path.relative(root, f).replace(/\\/g, '/');
+  }
+  return null;
+}
+
+function checkInventiveCatalyst(ctx) {
+  const out = [];
+  for (const l of ctx.prose) {
+    const flat = deaccent(l.text).toLowerCase();
+    const pairs = flat.matchAll(/([a-z]+)\s+y\s+([a-z]+)/g);
+    for (const p of pairs) {
+      const key = p[1] + '|' + p[2];
+      if (!EXCLUSIVO.has(key)) continue;
+      out.push(mk('egm-inventive-catalyst', 'major', 'falso-compromiso', 'commitment:' + key,
+        'Falso compromiso: "' + p[1] + ' y ' + p[2] + '" promete dos propiedades excluyentes a la vez.',
+        'linea ' + l.n + ': ' + snippet(l.text), 'propose_fix'));
+    }
+    const simple = flat.match(/lo mas simple posible|lo mas facil posible|tan simple como sea posible/i);
+    if (simple) {
+      out.push(mk('egm-inventive-catalyst', 'major', 'falso-compromiso', 'commitment:lo-mas-simple-possible',
+        'Falso compromiso: "' + snippet(simple[0]) + '" no admite criterio de verificacion.',
+        'linea ' + l.n + ': ' + snippet(l.text), 'propose_fix'));
+    }
+  }
+  return { persona: 'egm-inventive-catalyst', status: 'completed', findings: out };
+}
+
+const CHECKERS = [
+  checkStructural,
+  checkStyle,
+  checkComprehension,
+  checkImplementationReadiness,
+  checkDesign,
+  checkCodebaseDetails,
+  checkZoomOut,
+  checkInventiveCatalyst,
+];
+
+// ---------- motor de revision ----------
+
+function countBy(findings) {
+  const c = { blocker: 0, major: 0, nit: 0 };
+  for (const f of findings) if (c[f.severity] !== undefined) c[f.severity]++;
+  return c;
+}
+
+function dedupeById(findings) {
+  const seen = new Map();
+  for (const f of findings) {
+    if (!seen.has(f.id)) seen.set(f.id, f);
+  }
+  return [...seen.values()];
+}
+
+function summaryOf(findings, reviewers) {
+  const c = countBy(findings);
+  const open = findings.filter(f => f.status === 'open');
+  const oc = countBy(open);
+  const dims = [...new Set(findings.map(f => f.dimension))].sort();
+  return {
+    total: findings.length,
+    blocker: c.blocker,
+    major: c.major,
+    nit: c.nit,
+    abiertos: { total: open.length, blocker: oc.blocker, major: oc.major, nit: oc.nit },
+    revisores: {
+      total: reviewers.length,
+      completed: reviewers.filter(r => r.status === 'completed').length,
+      notRun: reviewers.filter(r => r.status !== 'completed').length,
+    },
+    dimensiones: dims,
+  };
+}
+
+function detectChurn(current, previous) {
+  const fixed = new Set();
+  for (const p of previous || []) {
+    if (p.status !== 'fixed') continue;
+    if (p.scope) fixed.add(p.scope);
+    if (p.id) fixed.add(p.id);
+  }
+  for (const f of current) {
+    if (f.status === 'fixed' || f.status === 'settled') continue;
+    if (fixed.has(f.scope) || fixed.has(f.id)) {
+      return { id: f.id, scope: f.scope, persona: f.persona };
+    }
+  }
+  return null;
+}
+
+export function egmReview({ cwd, target, base, maxRounds = EGM_MAX_RONDAS, previous } = {}) {
+  const root = path.resolve(cwd || process.cwd());
+  const read = readTarget(root, target);
+  if (!read.ok) {
+    const result = {
+      target: String(target || ''),
+      rounds: 0,
+      findings: [],
+      summary: summaryOf([], []),
+      verdict: 'FAIL',
+      reviewComplete: false,
+      reason: read.reason,
+      reviewers: [],
+      base: base || null,
+      maxRounds,
+    };
+    result.report = egmReport(result);
+    return result;
+  }
+
+  const ctx = buildContext(root, read);
+  const reviewers = [];
+  const raw = [];
+  for (const checker of CHECKERS) {
+    const r = checker(ctx);
+    reviewers.push({ persona: r.persona, status: r.status, findings: r.findings.length });
+    raw.push(...r.findings);
+  }
+  // El sintetizador no genera hallazgos: deduplica y consolida lo que los revisores produjeron.
+  const findings = dedupeById(raw);
+  reviewers.push({ persona: 'egm-synthesizer', status: 'completed', findings: 0, consolidated: findings.length });
+
+  const counts = countBy(findings);
+  const notRun = reviewers.filter(r => r.status !== 'completed');
+  const churn = detectChurn(findings, previous);
+
+  let verdict;
+  let reason;
+  if (counts.blocker > 0) {
+    verdict = 'FAIL';
+    reason = counts.blocker + ' blocker(s): el documento contradice el codigo o afirma algo falso.';
+  } else if (churn) {
+    verdict = 'RERUN';
+    reason = 'Churn: el hallazgo ' + churn.id + ' reaparece en el scope ' + churn.scope + ' despues de un fix.';
+  } else if (notRun.length) {
+    verdict = 'RERUN';
+    reason = 'Revisores sin ejecutar: ' + notRun.map(r => r.persona).join(', ') + '.';
+  } else if (counts.major > 0) {
+    verdict = 'REFIX';
+    reason = counts.major + ' major(s) pendientes contra el estandar aplicado.';
+  } else {
+    verdict = 'PASS';
+    reason = 'Sin blockers ni majors y todos los revisores completaron.';
+  }
+
+  const result = {
+    target: read.rel || String(target || ''),
+    rounds: 1,
+    findings,
+    summary: summaryOf(findings, reviewers),
+    verdict,
+    reviewComplete: true,
+    reason,
+    reviewers,
+    base: base || null,
+    maxRounds,
+  };
+  result.report = egmReport(result);
+  return result;
+}
+
+// ---------- motor de convergencia ----------
+
+function normalizeRound(round) {
+  if (Array.isArray(round)) return { findings: round, reviewers: [] };
+  const findings = Array.isArray(round && round.findings) ? round.findings : [];
+  const reviewers = Array.isArray(round && round.reviewers) ? round.reviewers : [];
+  return { findings, reviewers };
+}
+
+function scopeKey(f) {
+  return (f && (f.scope || f.id)) || '';
+}
+
+export function egmConvergence({ findingsByRound, maxRounds = EGM_MAX_RONDAS } = {}) {
+  const input = Array.isArray(findingsByRound) ? findingsByRound : [];
+  const cap = Math.max(1, Number(maxRounds) || EGM_MAX_RONDAS);
+  const statusById = new Map();
+  const statusByScope = new Map();
+  const fixedIds = new Set();
+  const fixedScopes = new Set();
+  let churn = false;
+  let churnDetail = null;
+  let cleanStreak = 0;
+  let cleanRounds = 0;
+  let openBlockers = 0;
+  let openMajors = 0;
+  const detalle = [];
+
+  for (const raw of input) {
+    const round = normalizeRound(raw);
+    const resolved = round.findings.map(f => {
+      const prev = statusById.get(f.id) || statusByScope.get(scopeKey(f));
+      if (prev === 'settled') return Object.assign({}, f, { status: 'settled' });
+      return f;
+    });
+    for (const f of resolved) {
+      if (f.status === 'fixed' || f.status === 'settled') continue;
+      if (fixedIds.has(f.id) || fixedScopes.has(scopeKey(f))) {
+        churn = true;
+        churnDetail = { id: f.id, scope: f.scope, persona: f.persona };
+      }
+    }
+    for (const f of resolved) {
+      statusById.set(f.id, f.status);
+      statusByScope.set(scopeKey(f), f.status);
+      if (f.status === 'fixed') {
+        fixedIds.add(f.id);
+        fixedScopes.add(scopeKey(f));
+      }
+    }
+    const open = resolved.filter(f => f.status === 'open');
+    const blockers = open.filter(f => f.severity === 'blocker').length;
+    const majors = open.filter(f => f.severity === 'major').length;
+    openBlockers = Math.max(openBlockers, blockers);
+    openMajors = Math.max(openMajors, majors);
+    const reviewersOk = round.reviewers.every(rv => rv.status === 'completed');
+    const clean = blockers === 0 && majors === 0 && reviewersOk;
+    if (clean) { cleanStreak++; cleanRounds = cleanStreak; } else cleanStreak = 0;
+    detalle.push({ findings: resolved, clean, blockers, majors });
+  }
+
+  const rounds = input.length;
+  const converged = cleanRounds >= 2;
+  let verdict;
+  let escalation = null;
+  if (churn) {
+    verdict = 'FAIL';
+    escalation = {
+      required: true,
+      motivo: 'Churn: ' + churnDetail.id + ' reaparece en el scope ' + churnDetail.scope + ' tras un fix. Escalar a humano.',
+      id: churnDetail.id,
+      scope: churnDetail.scope,
+    };
+  } else if (rounds >= cap && !converged) {
+    verdict = 'FAIL';
+    escalation = {
+      required: true,
+      motivo: 'Cap de ' + cap + ' rondas alcanzado con hallazgos abiertos. Escalar a humano.',
+      rondas: rounds,
+    };
+  } else if (converged) {
+    verdict = 'PASS';
+  } else if (openBlockers > 0) {
+    verdict = 'FAIL';
+  } else if (openMajors > 0) {
+    verdict = 'REFIX';
+  } else {
+    verdict = 'RERUN';
+  }
+
+  return { converged, rounds, cleanRounds, churn, verdict, escalation, open: { blocker: openBlockers, major: openMajors }, detalle };
+}
+
+// ---------- drift doc-codigo ----------
+
+function driftIncompleteModel(ctx, codeRefs) {
+  const out = [];
+  const modelSections = ctx.sections.filter(s => /campo|modelo|esquema|datos|contrato/i.test(s.title));
+  if (!modelSections.length) return out;
+  const target = codeRefs.find(r => CODE_EXT.test(r));
+  if (!target) return out;
+  let code = '';
+  try { code = fs.readFileSync(path.join(ctx.root, target), 'utf8'); } catch { return out; }
+  const flat = deaccent(code);
+  for (const s of modelSections) {
+    for (const line of s.body) {
+      const names = [];
+      const bt = line.match(/`([A-Za-z_][A-Za-z0-9_]*)`/g) || [];
+      for (const raw of bt) names.push(raw.replace(/`/g, ''));
+      const kv = line.match(/^\s*[-*]?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]/);
+      if (kv) names.push(kv[1]);
+      for (const name of names) {
+        if (!flat.includes(name)) {
+          out.push({
+            doc: ctx.rel,
+            kind: 'incomplete_model',
+            ref: target,
+            campo: name,
+            detail: 'El campo "' + name + '" declarado en el doc no aparece en ' + target + '.',
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function driftLogicShortcut(ctx, codeRefs) {
+  const out = [];
+  if (!/din[aá]mic|configurab|por\s+par[aá]metro|variable/i.test(ctx.text)) return out;
+  for (const ref of codeRefs) {
+    if (!CODE_EXT.test(ref)) continue;
+    let code = '';
+    try { code = fs.readFileSync(path.join(ctx.root, ref), 'utf8'); } catch { continue; }
+    const counts = new Map();
+    for (const m of code.matchAll(/(['"])([^'"\n]{3,})\1/g)) {
+      const key = m[2];
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    for (const m of code.matchAll(/\b(\d{3,})\b/g)) {
+      counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+    }
+    for (const [value, n] of counts) {
+      if (n < 3) continue;
+      out.push({
+        doc: ctx.rel,
+        kind: 'logic_shortcut',
+        ref,
+        detail: 'El valor "' + value + '" esta hardcodeado ' + n + ' veces en ' + ref + ', donde el doc espera logica dinamica.',
+      });
+      break;
+    }
+  }
+  return out;
+}
+
+function driftArchitecturalDivergence(ctx, root) {
+  const out = [];
+  const flat = deaccent(ctx.text).toLowerCase();
+  const srcDir = path.join(root, 'src');
+  const files = fs.existsSync(srcDir) ? walk(srcDir).filter(f => CODE_EXT.test(f)) : [];
+  let corpus = '';
+  for (const f of files) {
+    try { corpus += fs.readFileSync(f, 'utf8').toLowerCase(); } catch { /* archivo ilegible: se ignora */ }
+  }
+  for (const tech of TECHOS) {
+    if (!new RegExp('\\b' + tech + '\\b').test(flat)) continue;
+    if (corpus.includes(tech)) continue;
+    out.push({
+      doc: ctx.rel,
+      kind: 'architectural_divergence',
+      tech,
+      detail: 'El doc menciona "' + tech + '" pero el codigo de src/ no lo usa.',
+    });
+  }
+  return out;
+}
+
+export function egmDrift({ cwd, docsDir } = {}) {
+  const root = path.resolve(cwd || process.cwd());
+  const docs = path.resolve(root, String(docsDir || 'docs'));
+  const drift = [];
+  if (!fs.existsSync(docs)) return { drift: [], message: 'No drift detected' };
+
+  for (const file of walk(docs)) {
+    if (!/\.md$/i.test(file)) continue;
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    const ctx = buildContext(root, { file, text, rel: path.relative(root, file).replace(/\\/g, '/') });
+    const refs = [];
+    const seen = new Set();
+    for (const l of ctx.lines) {
+      if (l.code) continue;
+      const clean = stripUrls(l.text);
+      for (const raw of clean.match(PATH_RE) || []) {
+        const ref = raw.replace(/[.,;:)]+$/, '');
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        refs.push({ ref, creation: CREATION.test(l.text), n: l.n, text: l.text });
+      }
+    }
+    const existing = refs.filter(r => !r.creation && fs.existsSync(path.join(root, r.ref))).map(r => r.ref);
+    for (const r of refs) {
+      if (r.creation) continue;
+      if (fs.existsSync(path.join(root, r.ref))) continue;
+      drift.push({
+        doc: ctx.rel,
+        kind: 'missing_feature',
+        ref: r.ref,
+        detail: 'El doc cita "' + r.ref + '" y el proyecto no lo tiene (linea ' + r.n + ').',
+      });
+    }
+    drift.push(...driftIncompleteModel(ctx, existing));
+    drift.push(...driftLogicShortcut(ctx, existing));
+    drift.push(...driftArchitecturalDivergence(ctx, root));
+  }
+
+  if (!drift.length) return { drift: [], message: 'No drift detected' };
+  return { drift, message: drift.length + ' diferencia(s) doc-codigo detectada(s).' };
+}
+
+// ---------- reporte ----------
+
+function escapeCell(text) {
+  return String(text || '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+export function egmReport(result) {
+  const r = result || {};
+  const s = r.summary || {};
+  const L = [];
+  L.push('# Goldfish Review Report');
+  L.push('');
+  L.push('Target: ' + (r.target || '(sin target)'));
+  L.push('Veredicto: ' + (r.verdict || 'FAIL'));
+  L.push('Revision completa: ' + (r.reviewComplete === false ? 'no' : 'si'));
+  if (r.base) L.push('Base: ' + r.base);
+  L.push('Rondas: ' + (r.rounds || 0));
+  L.push('');
+  L.push('## Resumen');
+  L.push('- blocker: ' + (s.blocker || 0));
+  L.push('- major: ' + (s.major || 0));
+  L.push('- nit: ' + (s.nit || 0));
+  L.push('- total: ' + (s.total || 0));
+  L.push('');
+  L.push('## Hallazgos');
+  if (!r.findings || !r.findings.length) L.push('(sin hallazgos)');
+  else {
+    L.push('| id | persona | severidad | scope | detalle |');
+    L.push('| --- | --- | --- | --- | --- |');
+    for (const f of r.findings) {
+      L.push('| ' + f.id + ' | ' + f.persona + ' | ' + f.severity + ' | ' + escapeCell(f.scope) + ' | ' + escapeCell(f.detail) + ' |');
+    }
+  }
+  L.push('');
+  L.push('## Revisores');
+  L.push('| persona | estado |');
+  L.push('| --- | --- |');
+  for (const rv of r.reviewers || []) L.push('| ' + rv.persona + ' | ' + rv.status + ' |');
+  L.push('');
+  L.push('## Motivo');
+  L.push(r.reason || 'Sin motivo registrado.');
+  return L.join('\n');
+}

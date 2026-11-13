@@ -242,6 +242,8 @@ export function defaultDeps(cwd) {
               windowsHide: false,
             })
           : nodeSpawn('sh', [launcherAbs], { cwd: spawnCwd, detached: true, stdio: 'ignore' });
+      // Sin listener de 'error' un spawn fallido (ENOENT/EINVAL) abortaba el proceso padre.
+      child.on('error', () => {});
       child.unref();
       return { pid: child.pid };
     },

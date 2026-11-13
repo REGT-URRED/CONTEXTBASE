@@ -57,6 +57,8 @@ const MANIFEST_FILES = new Set([
 export function isRelevantPath(relPath) {
   const norm = String(relPath || '').replace(/\\/g, '/').replace(/^\.\//, '');
   if (!norm) return false;
+  if (norm[1] === ':' && norm[2] === '/') return false;
+  if (norm.startsWith('../') || norm === '..') return false;
   if (IGNORED_FILES.has(norm)) return false;
   if (norm.endsWith('.tmp') || norm.endsWith('.lock') || norm.endsWith('.log')) return false;
   for (const prefix of IGNORED_PREFIXES) {
@@ -104,7 +106,7 @@ function updateAutoChangelog(projectDir, changedFiles) {
     const lines = current.split(/\r?\n/);
     const autoPrefix = `- [${dateStr}] [auto] Sincronización automática de archivos modificados:`;
     const existingIdx = lines.findIndex(l => l.startsWith(autoPrefix));
-    if (existingIdx !== -1 && existingIdx < 20) {
+    if (existingIdx !== -1) {
       if (lines[existingIdx] === entryLine) return false;
       lines[existingIdx] = entryLine;
       writeAtomic(changelogPath, lines.join('\n'));
@@ -323,6 +325,8 @@ export function startDaemonWatcher(projectDir = process.cwd()) {
     windowsHide: true,
     stdio: 'ignore'
   });
+  // Sin listener de 'error' el daemon caido por un spawn fallido abortaba el proceso padre.
+  child.on('error', () => {});
   child.unref();
   const pFile = pidFile(root);
   fs.mkdirSync(path.dirname(pFile), { recursive: true });

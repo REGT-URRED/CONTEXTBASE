@@ -4,13 +4,13 @@ Inventario vivo de componentes, frescura de versiones y verificación de brechas
 
 ---
 
-## Última verificación: 2026-11-11
+## Última verificación: 2026-11-13
 
 ---
 
 ## Inventario de Componentes
 
-- **Node.js / npm** — manifiesto `package.json`, última modificación: 2026-11-12
+- **Node.js / npm** — manifiesto `package.json`, última modificación: 2026-11-13
   - Sin dependencias declaradas.
 
 ---
@@ -37,4 +37,4 @@ Sin vulnerabilidades conocidas reportadas.
 2. Regenerar con `contextbase audit` como verificación final de cada cambio cerrado.
 3. Si aparecen vulnerabilidades critical/high: registrar en `tasklist.md` y corregirlas antes de continuar con nuevas funcionalidades.
 ---
-*Generado automáticamente por ContextBase CLI el 2026-11-11.*
+*Generado automáticamente por ContextBase CLI el 2026-11-13.*

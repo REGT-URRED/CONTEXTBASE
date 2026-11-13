@@ -45,6 +45,53 @@ export async function runExtra(command, args, cwd) {
     return runAgentsCommand(args, cwd);
   }
 
+  if (command === 'egm') {
+    const sub = args[1] && !args[1].startsWith('--') ? args[1] : 'review';
+    const isJson = args.includes('--json');
+    const egm = await import('./egm.js');
+    if (sub === 'personas') {
+      if (isJson) { console.log(JSON.stringify(egm.EGM_PERSONAS, null, 2)); return true; }
+      console.log(c.bold + 'Personas del modelo EGM:' + c.reset);
+      for (const p of egm.EGM_PERSONAS) console.log('  - ' + p.id + ' | ' + p.mision);
+      return true;
+    }
+    if (sub === 'standards') {
+      if (isJson) { console.log(JSON.stringify(egm.EGM_ESTANDARES, null, 2)); return true; }
+      console.log(c.bold + 'Estandares del modelo EGM:' + c.reset);
+      for (const s of egm.EGM_ESTANDARES) {
+        console.log('  - ' + s.id + ': ' + s.nombre);
+        for (const r of s.reglas) console.log('      * ' + r);
+      }
+      return true;
+    }
+    if (sub === 'skills') {
+      if (isJson) { console.log(JSON.stringify(egm.EGM_SKILLS, null, 2)); return true; }
+      console.log(c.bold + 'Skills del modelo EGM:' + c.reset);
+      for (const s of egm.EGM_SKILLS) console.log('  - ' + s.id + ': ' + s.proposito);
+      return true;
+    }
+    if (sub === 'drift') {
+      const res = await egm.egmDrift({ cwd, docsDir: (args.find(a => a.startsWith('--docs=')) || '').replace('--docs=', '') });
+      if (isJson) { console.log(JSON.stringify(res, null, 2)); return true; }
+      console.log(res.message || ('Drift detectado: ' + res.drift.length));
+      for (const d of res.drift || []) console.log('  - [' + d.clase + '] ' + d.scope + ': ' + d.detalle);
+      if (res.drift && res.drift.length) process.exitCode = 1;
+      return true;
+    }
+    if (sub === 'review') {
+      const targetArg = (args.find(a => a.startsWith('--target=')) || '').replace('--target=', '');
+      const baseArg = (args.find(a => a.startsWith('--base=')) || '').replace('--base=', '');
+      const res = await egm.egmReview({ cwd, target: targetArg || undefined, base: baseArg || undefined });
+      if (isJson) { console.log(JSON.stringify(res, null, 2)); }
+      else { console.log(res.report || ''); }
+      if (res.verdict !== 'PASS') process.exitCode = 1;
+      return true;
+    }
+    console.error('Uso: contextbase egm [review|drift|personas|standards|skills] [--target <archivo>] [--base <ref>] [--docs <dir>] [--json]');
+    process.exitCode = 2;
+    return true;
+  }
+
   if (command === 'bootstrap') {
     const cliArg = (args.find(a => a.startsWith('--cli=')) || '').replace('--cli=', '') || 'auto';
     const toolsArg = (args.find(a => a.startsWith('--tools=')) || '').replace('--tools=', '');

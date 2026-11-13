@@ -182,7 +182,12 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
     const text = String(extraArgs.join(' ')).trim();
     if (text && fs.existsSync(tasklistPath)) {
       const current = fs.readFileSync(tasklistPath, 'utf8');
-      if (!current.includes(text)) {
+      // Deduplicacion exacta por linea de tarea: un substring no debe descartar una tarea nueva.
+      const already = current.split('\n').some(l => {
+        const t = l.trim();
+        return t === '- [ ] ' + text || t === '- [x] ' + text;
+      });
+      if (!already) {
         cliMod.runTask('add', text, root);
       }
     }

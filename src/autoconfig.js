@@ -71,6 +71,18 @@ function readJsonSafe(file) {
   return null;
 }
 
+/**
+ * OpenCode v2 autoscanea los directorios `plugin/` y `plugins/` y exige directorios
+ * en la entrada `plugin`: registrar la ruta de un archivo solo dispara el aviso
+ * "configured plugin path must be a directory" y no aporta nada.
+ */
+function isContextbasePluginFile(entry) {
+  return typeof entry === 'string' && /contextbase-auto\.js$/i.test(entry);
+}
+function stripContextbasePluginFiles(arr) {
+  return (Array.isArray(arr) ? arr : []).filter(p => !isContextbasePluginFile(p));
+}
+
 function ensureArrayItem(arr, item) {
   const list = Array.isArray(arr) ? arr.slice() : [];
   if (!list.includes(item)) list.push(item);
@@ -160,7 +172,8 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '  for (const cand of candidates) {',
     '    if (cand && fs.existsSync(cand)) return { bin: nodeBin, prefix: [cand] };',
     '  }',
-    '  return { bin: "contextbase", prefix: [] };',
+    '  // Sin binario de ContextBase no inventamos un comando: en Windows fallaba con ENOENT/EINVAL y abortaba el host.',
+    '  return null;',
     '}',
     '',
     'function readSpiderContext(cwd) {',
@@ -176,6 +189,7 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     'function runSyncHook(event, cwd, extra = []) {',
     '  try {',
     '    const resolved = resolveCbCommand(cwd);',
+    '    if (!resolved) return "";',
     '    return execFileSync(resolved.bin, [...resolved.prefix, "hook-run", event, ...extra], {',
     '      cwd,',
     '      encoding: "utf8",',
@@ -191,12 +205,14 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     'function runAsyncHook(event, cwd, extra = []) {',
     '  try {',
     '    const resolved = resolveCbCommand(cwd);',
+    '    if (!resolved) return;',
     '    const child = spawn(resolved.bin, [...resolved.prefix, "hook-run", event, ...extra], {',
     '      cwd,',
     '      detached: true,',
     '      windowsHide: true,',
     '      stdio: "ignore"',
     '    });',
+    '    child.on("error", () => {});',
     '    child.unref();',
     '  } catch {}',
     '}',
@@ -234,12 +250,29 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '        if (!digest || !output) return;',
     '        const marker = "<!-- CONTEXTBASE:LIVE_DIGEST -->";',
     '        const block = `${marker}\\n${digest}\\n<!-- /CONTEXTBASE:LIVE_DIGEST -->`;',
+    '        const END = "<!-- /CONTEXTBASE:LIVE_DIGEST -->";',
     '        if (Array.isArray(output.system)) {',
     '          const idx = output.system.findIndex(s => typeof s === "string" && s.includes(marker));',
-    '          if (idx >= 0) output.system[idx] = block;',
-    '          else output.system.push(block);',
-    '        } else if (typeof output.system === "string" && !output.system.includes(marker)) {',
-    '          output.system = `${output.system}\\n\\n${block}`;',
+    '          if (idx >= 0) {',
+    '            const current = output.system[idx];',
+    '            const end = current.indexOf(END);',
+    '            const head = end >= 0 ? current.slice(0, current.indexOf(marker)) : current;',
+    '            const tail = end >= 0 ? current.slice(end + END.length) : "";',
+    '            output.system[idx] = head + block + tail;',
+    '          } else {',
+    '            output.system.push(block);',
+    '          }',
+    '        } else if (typeof output.system === "string") {',
+    '          const end = output.system.indexOf(END);',
+    '          if (output.system.includes(marker) && end >= 0) {',
+    '            const head = output.system.slice(0, output.system.indexOf(marker));',
+    '            const tail = output.system.slice(end + END.length);',
+    '            output.system = head + block + tail;',
+    '          } else if (!output.system.includes(marker)) {',
+    '            output.system = `${output.system}\\n\\n${block}`;',
+    '          }',
+    '        } else {',
+    '          output.system = block;',
     '        }',
     '      } catch {}',
     '    },',
@@ -254,8 +287,10 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '        const args = (input && input.args) || {};',
     '        const rawTarget = args.filePath || args.path || args.file || "";',
     '        if (!rawTarget) return;',
-    '        const relTarget = path.isAbsolute(rawTarget) ? path.relative(workDir, rawTarget).replace(/\\\\/g, "/") : String(rawTarget).replace(/\\\\/g, "/").replace(/^\\.\\//, "");',
-    '        if (spiderMeta.forbiddenFiles.includes(relTarget)) {',
+    '        const relTarget = path.isAbsolute(rawTarget) ? path.relative(workDir, rawTarget) : String(rawTarget);',
+    '        const normTarget = path.resolve(workDir, relTarget).toLowerCase();',
+    '        const forbidden = spiderMeta.forbiddenFiles.map(f => path.resolve(workDir, String(f)).toLowerCase());',
+    '        if (forbidden.includes(normTarget)) {',
     '          throw new Error(`[ContextBase Telaraña] Aislamiento de hilo activo: el archivo "${relTarget}" pertenece a otra Araña. Modifica solo tus archivos asignados: ${(spiderMeta.assignedFiles || []).join(", ")}`);',
     '        }',
     '      } catch (err) {',
@@ -311,7 +346,21 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '  };',
     '};',
     '',
-    'export default ContextBaseAutoPlugin;',
+    '// OpenCode v2 exige un default export con id y setup/effect; una funcion suelta se descarta en silencio.',
+    'async function setupContextBaseAuto(ctx = {}) {',
+    '  const dir = (ctx && ctx.location && ctx.location.directory) || process.cwd();',
+    '  const plugin = await ContextBaseAutoPlugin({ directory: dir, worktree: dir });',
+    '  // v2 ignora los hooks que devuelve la factory v1: el pulso periodico mantiene vivo el digest y la sincronizacion.',
+    '  if (plugin && typeof plugin === "object") {',
+    '    const timer = setInterval(() => {',
+    '      try { runSyncHook("web-pulse", dir); } catch {}',
+    '    }, 30000);',
+    '    if (typeof timer.unref === "function") timer.unref();',
+    '  }',
+    '  return plugin;',
+    '}',
+    '',
+    'export default { id: "contextbase-auto", server: ContextBaseAutoPlugin, setup: setupContextBaseAuto };',
     ''
   ].join('\n');
 }
@@ -479,7 +528,7 @@ export function configureOpenCode(projectDir, options = {}) {
   }
   const cfg = parsed || {};
   cfg.instructions = ensureArrayItem(cfg.instructions, 'AGENTS.md');
-  cfg.plugin = ensureArrayItem(cfg.plugin, './.opencode/plugins/contextbase-auto.js');
+  cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
   cfg.permission = {
     ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
     'contextbase_*': 'allow'
@@ -777,7 +826,7 @@ export function autoConfigureGlobal(options = {}) {
       [
         {
           value(cfg) {
-            cfg.plugin = ensureArrayItem(cfg.plugin, pluginPath.replace(/\\/g, '/'));
+            cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',
@@ -846,7 +895,7 @@ export function autoConfigureGlobal(options = {}) {
       [
         {
           value(cfg) {
-            cfg.plugin = ensureArrayItem(cfg.plugin, pluginPath.replace(/\\/g, '/'));
+            cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',

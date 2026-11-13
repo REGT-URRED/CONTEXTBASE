@@ -29,11 +29,11 @@
     "postinstall": "node ./bin/contextbase.js setup --global --silent",
     "auto": "node ./bin/contextbase.js auto",
     "watch": "node ./bin/contextbase.js watch",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "audit": "node ./bin/contextbase.js audit",
     "mcp": "node ./bin/contextbase.js mcp",
     "pack:release": "npm pack",
-    "test:ci": "node --test",
+    "test:ci": "node --test test/*.test.js",
     "release:github": "node scripts/release-github.mjs"
   },
   "keywords": [
