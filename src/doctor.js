@@ -511,7 +511,19 @@ async function collectChecks(state) {
   // La sombra se mide ANTES del handshake: el propio MCP ejecuta autoEnsure y
   // escribiria/refrescaria la config del proyecto, falseando la lectura.
   checks.push(checkProjectShadow(state.root, info));
-  checks.push(await runMcpHandshake({ binPath: state.binPath, cwd: state.root, timeoutMs: state.timeoutMs }));
+  // El servidor MCP ejecuta autoEnsure en su cwd: el handshake corre en un sandbox
+  // temporal y se limpia, para no dejar scaffolding en el proyecto ni en el cwd real.
+  // Ruta FIJA (no acumula directorios): se limpia al empezar y se intenta limpiar
+  // al terminar. En Windows el proceso MCP puede retener el handle un instante, por
+  // eso la limpieza inicial es la que garantiza que nunca crezca.
+  const sandboxHandshake = path.join(os.tmpdir(), 'contextbase-doctor-handshake');
+  try { fs.rmSync(sandboxHandshake, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(sandboxHandshake, { recursive: true });
+  try {
+    checks.push(await runMcpHandshake({ binPath: state.binPath, cwd: sandboxHandshake, timeoutMs: state.timeoutMs }));
+  } finally {
+    try { fs.rmSync(sandboxHandshake, { recursive: true, force: true }); } catch {}
+  }
   return checks;
 }
 

@@ -5,6 +5,9 @@ Seguimiento del estado de tareas con alto contraste visual.
 ---
 
 ## Tareas Completadas
+- [x] [2026-11-13] "Plugin failed: contextbase-auto": rutas de archivo eliminadas de `plugin`/`plugins` y config de proyecto en el dialecto del host
+- [x] [2026-11-13] Instalacion global como copia real (independiente de `D:\PROCESO`): MCP y plugin apuntan a `%APPDATA%\npm\node_modules\contextbase`
+- [x] [2026-11-13] Handshake del doctor en sandbox temporal sin residuos
 - [x] [2026-11-13] `contextbase doctor`: verificacion de la instalacion global con handshake MCP real y `--fix`
 - [x] [2026-11-13] `contextbase verify`: matriz probabilistica del Arbitro (Happy/Unhappy) con puerta de falsos PASS/FAIL y ejecucion en paralelo
 - [x] [2026-11-13] `docs/COMPATIBILIDAD-OPENCODE.md` con las lecciones de las rupturas y su verificacion

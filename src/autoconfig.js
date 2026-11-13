@@ -79,8 +79,25 @@ function readJsonSafe(file) {
 function isContextbasePluginFile(entry) {
   return typeof entry === 'string' && /contextbase-auto\.js$/i.test(entry);
 }
+
+/**
+ * OpenCode v2 rechaza con "configured plugin path must be a directory" cualquier
+ * entrada de plugin que sea un ARCHIVO (.js/.ts/.mjs/...). El plugin de ContextBase
+ * se autodescubre desde el directorio plugins/, asi que las rutas de archivo se
+ * eliminan; las entradas de paquete o directorio se conservan.
+ */
+function isPluginFilePath(entry) {
+  if (typeof entry !== 'string') return false;
+  const limpio = entry.split('?')[0].trim();
+  return /\.(js|mjs|cjs|ts|mts|cts)$/i.test(limpio);
+}
+
+function stripPluginFilePaths(arr) {
+  return (Array.isArray(arr) ? arr : []).filter((p) => !isPluginFilePath(p));
+}
+
 function stripContextbasePluginFiles(arr) {
-  return (Array.isArray(arr) ? arr : []).filter(p => !isContextbasePluginFile(p));
+  return stripPluginFilePaths(arr);
 }
 
 function removeFileIfExists(file) {
@@ -761,6 +778,7 @@ export function configureOpenCode(projectDir, options = {}) {
 
   const target = pickOpenCodeConfigPath(projectDir);
   const mergeFailures = [];
+  const want = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
   const res = mergeUserConfig(
     target,
     {},
@@ -768,39 +786,72 @@ export function configureOpenCode(projectDir, options = {}) {
       {
         value(cfg) {
           cfg.instructions = ensureArrayItem(cfg.instructions, 'AGENTS.md');
-          cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
-          cfg.permission = {
-            ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
-            'contextbase_*': 'allow'
-          };
+          // El esquema del host manda: v2 usa plugins/permissions/mcp.servers;
+          // v1 usaba plugin/permission/mcp.<nombre>. Mezclarlos invalida el config.
+          const esV2 = hostSchemaIsV2() || Array.isArray(cfg.permissions) || Array.isArray(cfg.plugins)
+            || (cfg.agents && typeof cfg.agents === 'object')
+            || Boolean(cfg.mcp && typeof cfg.mcp === 'object' && cfg.mcp.servers);
+          cfg.plugins = stripPluginFilePaths(cfg.plugins);
+          if (!esV2) cfg.plugin = stripPluginFilePaths(cfg.plugin);
+          if (esV2) {
+            const permisos = Array.isArray(cfg.permissions) ? cfg.permissions.slice() : [];
+            if (!permisos.some((p) => p && p.action === 'contextbase_*')) {
+              permisos.push({ action: 'contextbase_*', resource: '*', effect: 'allow' });
+            }
+            cfg.permissions = permisos;
+          } else {
+            cfg.permission = {
+              ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
+              'contextbase_*': 'allow'
+            };
+          }
           if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
-          cfg.mcp.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
+          if (esV2) {
+            cfg.mcp.servers = { ...(cfg.mcp.servers && typeof cfg.mcp.servers === 'object' ? cfg.mcp.servers : {}), contextbase: want };
+            // Limpieza del dialecto v1 SOLO cuando la clave es vacia o propiedad de
+            // ContextBase: el host v2 ignora estas claves y su presencia confunde.
+            if (Array.isArray(cfg.plugin) && cfg.plugin.length === 0) delete cfg.plugin;
+            if (cfg.permission && typeof cfg.permission === 'object'
+              && Object.keys(cfg.permission).every((k) => k === 'contextbase_*')) delete cfg.permission;
+            if (cfg.mcp.contextbase) delete cfg.mcp.contextbase;
+          } else {
+            cfg.mcp.contextbase = want;
+          }
         },
         jsonc(raw, parsed) {
           let out = raw;
           const instructions = ensureArrayItem(parsed.instructions, 'AGENTS.md');
           if (!configEq(parsed.instructions, instructions)) out = setJsoncPath(out, ['instructions'], instructions);
           for (const key of ['plugin', 'plugins']) {
-            if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
-              out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+            if (Array.isArray(parsed[key]) && parsed[key].some(isPluginFilePath)) {
+              out = setJsoncPath(out, [key], stripPluginFilePaths(parsed[key]));
             }
           }
-          const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
-          if (existingPerm !== 'allow') {
-            out = setJsoncPath(out, ['permission'], {
-              ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
-              'contextbase_*': 'allow'
-            });
+          const esV2 = hostSchemaIsV2() || Array.isArray(parsed.permissions) || Array.isArray(parsed.plugins)
+            || (parsed.agents && typeof parsed.agents === 'object')
+            || Boolean(parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers);
+          if (esV2) {
+            const permisos = Array.isArray(parsed.permissions) ? parsed.permissions.slice() : [];
+            if (!permisos.some((p) => p && p.action === 'contextbase_*')) {
+              out = setJsoncPath(out, ['permissions'], [...permisos, { action: 'contextbase_*', resource: '*', effect: 'allow' }]);
+            }
+          } else {
+            const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
+            if (existingPerm !== 'allow') {
+              out = setJsoncPath(out, ['permission'], {
+                ...(parsed.permission && typeof parsed.permission === 'object' ? parsed.permission : {}),
+                'contextbase_*': 'allow'
+              });
+            }
           }
           const mcpServers = parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers && typeof parsed.mcp.servers === 'object';
-          const want = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
           const have = mcpServers
             ? parsed.mcp.servers.contextbase
             : (parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp.contextbase : undefined);
           if (!configEq(have, want)) {
             const mcpBase = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : {};
-            out = setJsoncPath(out, ['mcp'], mcpServers
-              ? { ...mcpBase, servers: { ...mcpBase.servers, contextbase: want } }
+            out = setJsoncPath(out, ['mcp'], mcpServers || esV2
+              ? { ...mcpBase, servers: { ...(mcpBase.servers || {}), contextbase: want } }
               : { ...mcpBase, contextbase: want });
           }
           return out;
@@ -1090,6 +1141,33 @@ function safeJsonParse(raw) {
  * Configura los directorios globales del usuario para que cualquier proyecto nuevo
  * tenga el plugin y el servidor MCP de ContextBase activos sin ejecucion manual.
  */
+/**
+ * Detecta el esquema del host leyendo la config GLOBAL de OpenCode: v2 usa
+ * `permissions`/`agents`/`plugins`/`mcp.servers`; v1 usaba `permission`/`mcp.<nombre>`.
+ * El config de PROYECTO debe hablar el mismo dialecto o el host ignora sus claves.
+ */
+function hostSchemaIsV2(homeDir = os.homedir()) {
+  // Bajo node --test no se inspecciona el home real (resultado determinista).
+  if (process.env.NODE_TEST_CONTEXT && process.env.CONTEXTBASE_HOST_SCHEMA !== 'v2') return false;
+  if (process.env.CONTEXTBASE_HOST_SCHEMA === 'v1') return false;
+  if (process.env.CONTEXTBASE_HOST_SCHEMA === 'v2') return true;
+  try {
+    const dir = path.join(homeDir, '.config', 'opencode');
+    const target = pickOpenCodeConfigPath(dir);
+    if (!target || !target.file || !fs.existsSync(target.file)) return false;
+    const cfg = target.format === 'jsonc' ? readJsonc(target.file) : safeJsonParse(fs.readFileSync(target.file, 'utf8'));
+    if (!cfg || typeof cfg !== 'object') return false;
+    return Boolean(
+      Array.isArray(cfg.permissions) ||
+      Array.isArray(cfg.plugins) ||
+      (cfg.agents && typeof cfg.agents === 'object') ||
+      (cfg.mcp && typeof cfg.mcp === 'object' && cfg.mcp.servers)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function autoConfigureGlobal(options = {}) {
   const homeDir = options.homeDir || os.homedir();
   const binPath = options.binPath || getBinPath();
@@ -1131,8 +1209,8 @@ export function autoConfigureGlobal(options = {}) {
       [
         {
           value(cfg) {
-            cfg.plugins = stripContextbasePluginFiles(cfg.plugins);
-            if (!Array.isArray(cfg.permissions)) cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
+            cfg.plugins = stripPluginFilePaths(cfg.plugins);
+            if (!Array.isArray(cfg.permissions)) cfg.plugin = stripPluginFilePaths(cfg.plugin);
             if (Array.isArray(cfg.permissions)) {
               const already = cfg.permissions.some((p) => p && p.action === 'contextbase_*');
               if (!already) cfg.permissions = [...cfg.permissions, { action: 'contextbase_*', resource: '*', effect: 'allow' }];
@@ -1152,8 +1230,8 @@ export function autoConfigureGlobal(options = {}) {
           jsonc(raw, parsed) {
             let out = raw;
             for (const key of ['plugin', 'plugins']) {
-              if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
-                out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+              if (Array.isArray(parsed[key]) && parsed[key].some(isPluginFilePath)) {
+                out = setJsoncPath(out, [key], stripPluginFilePaths(parsed[key]));
               }
             }
             // El esquema v2 usa `permissions` (array de {action,resource,effect}); v1 usaba
@@ -1224,7 +1302,7 @@ export function autoConfigureGlobal(options = {}) {
         {
           value(cfg) {
             cfg.plugin = stripContextbasePluginFiles(cfg.plugin);
-            cfg.plugins = stripContextbasePluginFiles(cfg.plugins);
+            cfg.plugins = stripPluginFilePaths(cfg.plugins);
             cfg.permission = {
               ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}),
               'contextbase_*': 'allow',
@@ -1235,8 +1313,8 @@ export function autoConfigureGlobal(options = {}) {
           jsonc(raw, parsed) {
             let out = raw;
             for (const key of ['plugin', 'plugins']) {
-              if (Array.isArray(parsed[key]) && parsed[key].some(isContextbasePluginFile)) {
-                out = setJsoncPath(out, [key], stripContextbasePluginFiles(parsed[key]));
+              if (Array.isArray(parsed[key]) && parsed[key].some(isPluginFilePath)) {
+                out = setJsoncPath(out, [key], stripPluginFilePaths(parsed[key]));
               }
             }
             const existingPerm = parsed.permission && typeof parsed.permission === 'object' ? parsed.permission['contextbase_*'] : undefined;
