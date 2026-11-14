@@ -74,6 +74,11 @@ export function installSkill(target = 'global', projectDir = process.cwd(), cust
     // sincronizado para que ninguna instalacion anterior quede con skills desfasadas.
     if (fs.existsSync(path.join(customHome, '.opencode'))) {
       writeSkillsUnder(path.join(customHome, '.opencode', 'skills'));
+      // El home legacy ~/.opencode tambien es un directorio de plugins para el host:
+      // una copia vieja ahi choca con la global y el plugin se descarta con
+      // "Duplicate plugin ID: contextbase-auto". Solo se sincronizan skills.
+      fs.rmSync(path.join(customHome, '.opencode', 'plugin', 'contextbase-auto.js'), { force: true });
+      fs.rmSync(path.join(customHome, '.opencode', 'plugins', 'contextbase-auto.js'), { force: true });
     }
 
     // 3. Kilo Code global (~/.kilo/skills y ~/.config/kilo/skills si existe)

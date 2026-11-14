@@ -157,6 +157,24 @@ test('installSkill global instala contextbase y contextbase-egm respetando el co
   assert.equal(fs.existsSync(path.join(home, '.gemini', 'config', 'skills', 'contextbase-egm', 'SKILL.md')), true);
 });
 
+test('installSkill global elimina copias legacy del plugin en ~/.opencode', () => {
+  const home = tmp('cb-legacy-home-');
+  const proyecto = tmp('cb-legacy-proj-');
+  for (const dir of ['.opencode/plugin', '.opencode/plugins']) {
+    fs.mkdirSync(path.join(home, dir), { recursive: true });
+    fs.writeFileSync(path.join(home, dir, 'contextbase-auto.js'), 'export default {};\n', 'utf8');
+  }
+
+  installSkill('global', proyecto, home);
+
+  assert.equal(fs.existsSync(path.join(home, '.opencode', 'plugin', 'contextbase-auto.js')), false,
+    'una copia legacy en ~/.opencode/plugin choca con la global y el host la descarta');
+  assert.equal(fs.existsSync(path.join(home, '.opencode', 'plugins', 'contextbase-auto.js')), false,
+    'una copia legacy en ~/.opencode/plugins choca con la global y el host la descarta');
+  assert.equal(fs.existsSync(path.join(home, '.opencode', 'skills', 'contextbase', 'SKILL.md')), true,
+    'la sincronizacion de skills del home legacy debe mantenerse');
+});
+
 test('installSkill workspace instala todas las skills en el proyecto', () => {
   const home = tmp('cb-egm-home2-');
   const proyecto = tmp('cb-egm-proj2-');
