@@ -116,6 +116,7 @@ Seguimiento del estado de tareas con alto contraste visual.
 ## Tareas Pendientes / En Progreso
 - [x] [2026-11-13] `egm review` sin `--target` resuelve el objetivo por defecto del pulso (docs/ mas reciente) en vez de fallar contra el cwd. `test/egm-calibration.test.js` 8/8
 - [x] [2026-11-13] Simulador del Arbitro: reintento ante fallo transitorio y `errors[]` por escenario, sin tragarse el fallo como "0 outcomes". `test/simulate.test.js` 8/8
+- [x] [2026-11-14] Un solo plugin por host: con plugin global valido no se escribe copia en el proyecto y se elimina la existente; `hasStaleAgentConfig` acepta el global. `test/autoconfig.test.js` 7/7, suite 274/274
 - [ ] Ola 2 de hardening: locks de `autoEnsure`, CAS del arbitro sobre `lastArbitratedAt`, lock + merge de `baseline.json`, politica de retry/backoff, precondiciones git, `execFile` en lugar de `execSync`, encoding UTF-8 en PowerShell y nombres reservados de Windows
 - [ ] Cobertura de CLI: cerrar los 19 gaps detectados en la ola 1
 - [x] Tool MCP `contextbase_terminals` (list/close/send) integrado y testeado; soporte send nativo: opencode verificado, kilo verificado (v7.8.27, `kilo run --session`); agentes sin sesión nativa (claude/codex, CLIs no instalados) cubiertos por launcher universal `--universal`; inyección de teclas en TUI no soportada por diseño

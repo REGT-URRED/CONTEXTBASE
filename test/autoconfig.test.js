@@ -20,7 +20,11 @@ function tmp(prefix = 'cb-ac-') {
 
 test('autoConfigureProject genera kilo.json, opencode.json, .mcp.json y plugins', () => {
   const dir = tmp();
-  const res = autoConfigureProject(dir);
+  // Home aislado sin plugin global: en una maquina con el plugin global instalado
+  // el proyecto ya no recibe copia local (un solo plugin por host).
+  const home = tmp('cb-ac-home-');
+  const res = autoConfigureProject(dir, { homeDir: home });
+  fs.rmSync(home, { recursive: true, force: true });
   assert.ok(res.files.includes('kilo.json'));
   assert.ok(res.files.includes('opencode.json'));
   assert.ok(res.files.includes('.mcp.json'));
@@ -97,4 +101,46 @@ test('configureOpenCode no deja rutas de archivo en plugin/plugins sobre un conf
   assert.ok((cfg.plugin || []).includes('plugin-npm-valido'), 'las entradas que no son rutas se preservan');
   assert.ok(cfg.permissions.some((p) => p && p.action === 'contextbase_*'), 'el permiso contextbase_* se agrega en v2');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// Un solo plugin por host: si el global es valido, el proyecto no duplica copia
+// ---------------------------------------------------------------------------
+
+const GLOBAL_PLUGIN_SRC = "export default {\n  id: 'contextbase-auto',\n  server: async () => ({}),\n  setup: async () => ({})\n};\n";
+
+function homeWithGlobalPlugin() {
+  const home = tmp('cb-ac-home-');
+  const pluginsDir = path.join(home, '.config', 'opencode', 'plugins');
+  fs.mkdirSync(pluginsDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginsDir, 'contextbase-auto.js'), GLOBAL_PLUGIN_SRC, 'utf8');
+  return home;
+}
+
+test('con plugin global valido: no escribe copia local y elimina la existente', () => {
+  const dir = tmp('cb-ac-proj-');
+  const home = homeWithGlobalPlugin();
+  const localPlugin = path.join(dir, '.opencode', 'plugins', 'contextbase-auto.js');
+  fs.mkdirSync(path.dirname(localPlugin), { recursive: true });
+  fs.writeFileSync(localPlugin, '// copia vieja del proyecto\n', 'utf8');
+
+  const res = autoConfigureProject(dir, { homeDir: home });
+
+  assert.equal(fs.existsSync(localPlugin), false, 'la copia del proyecto se elimina si el global cubre');
+  assert.equal(res.files.includes('.opencode/plugins/contextbase-auto.js'), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('sin plugin global: escribe la copia local y la reporta', () => {
+  const dir = tmp('cb-ac-proj-');
+  const home = tmp('cb-ac-home-'); // home vacio, sin global
+
+  const res = autoConfigureProject(dir, { homeDir: home });
+  const localPlugin = path.join(dir, '.opencode', 'plugins', 'contextbase-auto.js');
+
+  assert.equal(fs.existsSync(localPlugin), true, 'sin global el proyecto necesita su propio plugin');
+  assert.ok(res.files.includes('.opencode/plugins/contextbase-auto.js'));
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
 });

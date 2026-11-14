@@ -250,11 +250,21 @@ function configEq(a, b) {
  * Verifica si algún archivo de configuración de agentes tiene rutas rotas o desactualizadas
  * (por ejemplo, tras mover el proyecto o descomprimirlo en otra máquina).
  */
-export function hasStaleAgentConfig(projectDir) {
+export function hasStaleAgentConfig(projectDir, options = {}) {
   const root = path.resolve(projectDir || process.cwd());
   const opencodeFile = pickOpenCodeConfigPath(root).file;
   const kiloFile = pickKiloConfigPath(root).file;
-  const pluginFile = path.join(root, '.opencode', 'plugins', 'contextbase-auto.js');
+  // Un solo plugin por host: el global cubre todas las sesiones, asi que la copia
+  // local solo es necesaria cuando no hay global valido.
+  const localPluginFile = path.join(root, '.opencode', 'plugins', 'contextbase-auto.js');
+  const globalPluginFile = path.join(
+    options.homeDir || os.homedir(),
+    '.config',
+    'opencode',
+    'plugins',
+    'contextbase-auto.js'
+  );
+  const pluginFile = fs.existsSync(localPluginFile) ? localPluginFile : globalPluginFile;
   if (!fs.existsSync(opencodeFile) || !fs.existsSync(kiloFile) || !fs.existsSync(pluginFile)) {
     return true;
   }
@@ -947,14 +957,36 @@ export function configureOpenCode(projectDir, options = {}) {
   const nodePath = options.nodePath || getNodePath();
   const written = [];
   const pluginFile = path.join(projectDir, '.opencode', 'plugins', 'contextbase-auto.js');
-  const pluginCode = ensureValidPluginSource(
-    buildOpenCodePluginSource(binPath, nodePath),
-    'configureOpenCode',
-    pluginFile
-  );
 
-  writeAtomic(pluginFile, pluginCode);
-  written.push('.opencode/plugins/contextbase-auto.js');
+  // Un solo plugin por host: OpenCode carga el global y el del proyecto en el
+  // mismo proceso. Si el global ya cumple el contrato, cubre todas las sesiones
+  // y la copia local solo duplica la instancia (y, si queda vieja en algun
+  // proyecto, rompe el arranque). Con global valido no se escribe copia local.
+  const globalPluginFile = path.join(
+    options.homeDir || os.homedir(),
+    '.config',
+    'opencode',
+    'plugins',
+    'contextbase-auto.js'
+  );
+  let globalPluginOk = false;
+  try {
+    globalPluginOk = validateOpenCodePluginSource(fs.readFileSync(globalPluginFile, 'utf8')).ok;
+  } catch {
+    globalPluginOk = false;
+  }
+
+  if (globalPluginOk) {
+    removeFileIfExists(pluginFile);
+  } else {
+    const pluginCode = ensureValidPluginSource(
+      buildOpenCodePluginSource(binPath, nodePath),
+      'configureOpenCode',
+      pluginFile
+    );
+    writeAtomic(pluginFile, pluginCode);
+    written.push('.opencode/plugins/contextbase-auto.js');
+  }
 
   // V2 descubre .opencode/plugins; la copia singular duplicaba todos los hooks.
   removeFileIfExists(path.join(projectDir, '.opencode', 'plugin', 'contextbase-auto.js'));
