@@ -8,6 +8,7 @@ import {
   autoConfigureProject,
   autoConfigureGlobal,
   configureClaude,
+  configureOpenCode,
   configureCursorAndIde,
   ensureGitExclude,
   buildOpenCodePluginSource
@@ -78,4 +79,22 @@ test('autoConfigureGlobal configura directorio home aislado y plugin valido', ()
   assert.ok(src.includes('tool.execute.after'));
   assert.ok(src.includes('session.idle'));
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('configureOpenCode no deja rutas de archivo en plugin/plugins sobre un config v2', () => {
+  const dir = tmp('cb-v2-plugin-');
+  fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({
+    permissions: [{ action: 'read', resource: '*', effect: 'allow' }],
+    plugin: ['./.opencode/plugins/contextbase-auto.js', 'plugin-npm-valido'],
+    plugins: ['./otro-plugin.js']
+  }, null, 2) + '\n', 'utf8');
+
+  configureOpenCode(dir);
+
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'opencode.json'), 'utf8'));
+  const rutas = [...(cfg.plugin || []), ...(cfg.plugins || [])].filter((p) => /\.(js|mjs|cjs|ts|mts|cts)$/i.test(String(p)));
+  assert.deepEqual(rutas, [], 'una ruta de archivo en plugin/plugins hace que el host descarte el plugin');
+  assert.ok((cfg.plugin || []).includes('plugin-npm-valido'), 'las entradas que no son rutas se preservan');
+  assert.ok(cfg.permissions.some((p) => p && p.action === 'contextbase_*'), 'el permiso contextbase_* se agrega en v2');
+  fs.rmSync(dir, { recursive: true, force: true });
 });

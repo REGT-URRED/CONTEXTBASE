@@ -982,7 +982,9 @@ export function configureOpenCode(projectDir, options = {}) {
             || (cfg.agents && typeof cfg.agents === 'object')
             || Boolean(cfg.mcp && typeof cfg.mcp === 'object' && cfg.mcp.servers);
           cfg.plugins = stripPluginFilePaths(cfg.plugins);
-          if (!esV2) cfg.plugin = stripPluginFilePaths(cfg.plugin);
+          // Las rutas de archivo son invalidas en ambos esquemas: una entrada legacy en
+          // `plugin` hace que el host intente cargar el .js por ruta y descarte el plugin.
+          cfg.plugin = stripPluginFilePaths(cfg.plugin);
           if (esV2) {
             const permisos = Array.isArray(cfg.permissions) ? cfg.permissions.slice() : [];
             if (!permisos.some((p) => p && p.action === 'contextbase_*')) {
