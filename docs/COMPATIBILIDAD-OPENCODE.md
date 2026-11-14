@@ -54,14 +54,45 @@ Garantia del tool: la fusion **detecta el esquema instalado** (si hay `permissio
 y escribe en la forma correcta; ademas es **idempotente**: si no hay cambios reales no reescribe el
 archivo, porque reescribirlo dispara la recarga del host y el churn.
 
-## 3. Doble instalacion (global + proyecto)
+## 3. Un solo plugin por host: las cuatro rutas
 
-OpenCode carga el plugin del home global **y** el del proyecto en el MISMO proceso. Dos instancias
-registraban los hooks dos veces: tareas duplicadas, hooks de ciclo de vida repetidos y digest
-inyectado dos veces.
+El host trata como directorio de plugins a mas de una ruta. En esta instalacion, estas cuatro
+entregan plugins con el mismo identificador:
 
-Garantia del tool: guard de instancia unica (`globalThis.__contextbaseAutoPluginActive`). La primera
-instancia registra hooks; la segunda devuelve un plugin vacio.
+| Ruta | Alcance |
+| :--- | :--- |
+| `<proyecto>/.opencode/plugins/` | proyecto |
+| `~/.config/opencode/plugins/` | global (esquema v2) |
+| `~/.opencode/plugins/` | global (home legacy) |
+| `~/.opencode/plugin/` | global (home legacy, singular) |
+
+Si el mismo `id` aparece en mas de una, el host carga todas y descarta las sobrantes. El sintoma en
+`opencode plugin list` es una entrada `local` y otra `failed, local` para el mismo nombre, y en el
+`log` del host: `Duplicate plugin ID: contextbase-auto`. En la sesion se pierde la automatizacion de la
+instancia descartada.
+
+El guard de instancia unica (`globalThis.__contextbaseAutoPluginActive`) evita hooks duplicados, pero
+no evita que el host marque una entrada como fallida: la correccion es de instalacion, no de runtime.
+
+Garantia del tool:
+
+- `configureOpenCode` escribe el plugin del proyecto solo cuando no hay un plugin global valido; con
+  global presente, elimina la copia local.
+- `installSkill` limpia `~/.opencode/plugin/contextbase-auto.js` y
+  `~/.opencode/plugins/contextbase-auto.js`, porque en ese home solo viven las skills.
+- `hasStaleAgentConfig` acepta el plugin global como equivalente, asi que `autoEnsure` no reintenta
+  una reparacion imposible.
+
+Comprobacion:
+
+```bash
+contextbase doctor
+Get-ChildItem ~/.config/opencode/plugins, ~/.opencode/plugins, ~/.opencode/plugin -Filter contextbase-auto.js
+```
+
+El resultado esperado es **un** archivo por maquina. Si aparece mas de uno, el host reporta el
+identificador duplicado; borra las copias sobrantes y reinicia el cliente para que la lista de
+plugins se refresque.
 
 ## 4. Instalacion global que no se nota
 
