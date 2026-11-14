@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { autoEnsure } from './auto.js';
+import { autoEnsure, isHomeDirectory } from './auto.js';
 import { collectState, buildDigest } from './context.js';
 import { syncWorkspaceChanges } from './watcher.js';
 import { autoFinalizeSpiderWorktree, autoPulseWeb, PHILOSOPHY } from './web.js';
@@ -135,27 +135,78 @@ export function installGitHook(projectDir, action = 'install') {
   return { ok: true, message: 'Hook post-commit instalado en ' + path.relative(projectDir, hookPath) + ' (autoguardado de commits en changelog.md).' };
 }
 
-function parseStdinPayload() {
-  try {
-    // Dentro del servidor MCP el stdin es el canal JSON-RPC vivo del host: leerlo
-    // de forma sincrona bloquea el proceso para siempre (el host nunca lo cierra).
-    if (process.env.CONTEXTBASE_MCP === '1') return null;
-    if (process.stdin.isTTY) return null;
-    const raw = fs.readFileSync(0, 'utf8').trim();
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function readStdinPayload(timeoutMs = 150) {
+  return new Promise((resolve) => {
+    try {
+      // Dentro del servidor MCP el stdin es el canal JSON-RPC vivo del host: leerlo
+      // bloquea el proceso para siempre o consume mensajes del protocolo.
+      if (process.env.CONTEXTBASE_MCP === '1') return resolve(null);
+      if (process.stdin.isTTY || process.stdin.destroyed || process.stdin.readableEnded) return resolve(null);
+
+      const chunks = [];
+      let settled = false;
+      let timer = null;
+      const finish = (rawText) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        process.stdin.removeListener('data', onData);
+        process.stdin.removeListener('end', onEnd);
+        process.stdin.removeListener('error', onError);
+        try { process.stdin.pause(); } catch {}
+        const raw = String(rawText || '').trim();
+        if (!raw) return resolve(null);
+        try { resolve(JSON.parse(raw)); } catch { resolve(null); }
+      };
+      const onData = (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+      const onEnd = () => finish(Buffer.concat(chunks).toString('utf8'));
+      const onError = () => finish('');
+
+      process.stdin.on('data', onData);
+      process.stdin.once('end', onEnd);
+      process.stdin.once('error', onError);
+      process.stdin.resume();
+
+      timer = setTimeout(() => {
+        const soFar = chunks.length ? Buffer.concat(chunks).toString('utf8') : '';
+        finish(soFar);
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 /**
  * Ejecuta eventos automaticos de ciclo de vida invocados por plugins de OpenCode/Kilo,
- * hooks de Claude Code o hooks de Git.
+ * hooks de Claude Code, Antigravity/Gemini o hooks de Git.
  */
 export async function runLifecycleHook(event = 'session-start', projectDir = process.cwd(), extraArgs = [], deps = null) {
-  const root = path.resolve(projectDir);
+  let root = path.resolve(projectDir);
+  const rawArgs = Array.isArray(extraArgs) ? extraArgs : [];
+  const wantAntigravity = rawArgs.includes('--antigravity') || process.env.CONTEXTBASE_HOOK_FORMAT === 'antigravity';
+  const cleanArgs = rawArgs.filter((a) => a !== '--antigravity');
   const evt = String(event || 'session-start').toLowerCase();
+
+  const payload = (evt === 'session-start' || evt === 'post-tool' || evt === 'session-stop' || evt === 'stop')
+    ? await readStdinPayload()
+    : null;
+
+  if (payload && typeof payload === 'object' && isHomeDirectory(root)) {
+    const cand = payload.cwd
+      || (Array.isArray(payload.workspace_roots) && payload.workspace_roots[0])
+      || payload.workspaceRoot
+      || '';
+    if (cand && typeof cand === 'string') {
+      const resolvedCand = path.resolve(cand);
+      if (fs.existsSync(resolvedCand)) root = resolvedCand;
+    }
+  }
+
+  if (isHomeDirectory(root)) {
+    return wantAntigravity ? JSON.stringify({}) : '';
+  }
 
   try {
     autoEnsure(root, { deps });
@@ -176,7 +227,8 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
     const state = collectState(root);
     const baseDigest = buildDigest(state, readOwnVersion());
     const spiderBlock = buildSpiderLiveInstructions(root);
-    return spiderBlock ? `${baseDigest}\n${spiderBlock}` : baseDigest;
+    const full = spiderBlock ? `${baseDigest}\n${spiderBlock}` : baseDigest;
+    return wantAntigravity ? JSON.stringify({ injectSteps: [full] }) : full;
   }
 
   if (evt === 'web-pulse') {
@@ -184,10 +236,10 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
     return JSON.stringify(arb || { active: false });
   }
 
-  if (evt === 'task-add' && extraArgs[0]) {
+  if (evt === 'task-add' && cleanArgs[0]) {
     const cliMod = await import('./cli.js');
     const tasklistPath = path.join(root, 'contextbase', 'tasklist.md');
-    const text = String(extraArgs.join(' ')).trim();
+    const text = String(cleanArgs.join(' ')).trim();
     if (text && fs.existsSync(tasklistPath)) {
       const current = fs.readFileSync(tasklistPath, 'utf8');
       // Deduplicacion exacta por linea de tarea: un substring no debe descartar una tarea nueva.
@@ -202,18 +254,17 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
     return 'ok';
   }
 
-  if (evt === 'task-done' && extraArgs[0]) {
+  if (evt === 'task-done' && cleanArgs[0]) {
     const cliMod = await import('./cli.js');
-    const text = String(extraArgs.join(' ')).trim();
+    const text = String(cleanArgs.join(' ')).trim();
     if (text) cliMod.runTask('done', text, root);
     return 'ok';
   }
 
   if (evt === 'post-tool') {
-    const payload = parseStdinPayload();
-    const files = [...extraArgs];
+    const files = [...cleanArgs];
     if (payload && typeof payload === 'object') {
-      const input = payload.tool_input || payload.input || payload.args || {};
+      const input = payload.tool_input || payload.input || payload.args || payload.tool_info || payload;
       const fp = input.file_path || input.filePath || input.path || '';
       if (fp) files.push(String(fp));
     }
@@ -223,9 +274,9 @@ export async function runLifecycleHook(event = 'session-start', projectDir = pro
 
   if (evt === 'session-stop' || evt === 'stop' || evt === 'post-commit' || evt === 'post-merge' || evt === 'post-checkout') {
     const logChanges = evt !== 'post-commit';
-    const res = syncWorkspaceChanges(root, extraArgs, { logChanges, force: evt === 'post-commit' || evt === 'post-merge', deps });
+    const res = syncWorkspaceChanges(root, cleanArgs, { logChanges, force: evt === 'post-commit' || evt === 'post-merge', deps });
     try {
-      autoFinalizeSpiderWorktree(root, res.files && res.files.length ? res.files : extraArgs, deps);
+      autoFinalizeSpiderWorktree(root, res.files && res.files.length ? res.files : cleanArgs, deps);
     } catch {}
     try {
       autoPulseWeb(root, deps);

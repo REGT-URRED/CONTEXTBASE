@@ -239,7 +239,7 @@ function checkGlobalOpenCodeConfig(info) {
   return buildCheck(id, title, 'info', true, `MCP registrado en ${info.file} -> ${scripts.join(', ')}`);
 }
 
-function checkGlobalOpenCodePlugin(info) {
+function checkGlobalOpenCodePlugin(info, homeDir) {
   const id = 'global-opencode-plugin';
   const title = 'Plugin global de OpenCode';
   const candidates = [
@@ -270,6 +270,21 @@ function checkGlobalOpenCodePlugin(info) {
       true
     );
   }
+
+  const legacyDuplicates = homeDir
+    ? [
+        path.join(homeDir, '.opencode', 'plugins', 'contextbase-auto.js'),
+        path.join(homeDir, '.opencode', 'plugin', 'contextbase-auto.js'),
+      ].filter((candidate) => candidate !== file && exists(candidate))
+    : [];
+  if (legacyDuplicates.length > 0) {
+    return buildCheck(
+      id, title, 'error', false,
+      `Duplicate plugin ID: hay copia(s) legacy en ${legacyDuplicates.join(', ')} que chocan con ${file}.`,
+      true
+    );
+  }
+
   return buildCheck(id, title, 'info', true, `${file} cumple el contrato { id, server, setup } (sin effect).`);
 }
 
@@ -364,7 +379,22 @@ function checkGlobalOpenCodeAgents(info) {
 // ---------------------------------------------------------------------------
 
 function inspectKiloGlobal(homeDir) {
-  const dirs = [path.join(homeDir, '.config', 'kilo'), path.join(homeDir, '.kilo')].filter((dir) => exists(dir));
+  const configDir = path.join(homeDir, '.config', 'kilo');
+  const legacyDir = path.join(homeDir, '.kilo');
+  const dirs = [];
+  if (exists(configDir)) dirs.push(configDir);
+  if (exists(legacyDir)) {
+    const hasLegacyCfg = Boolean(findFirst([path.join(legacyDir, 'kilo.json'), path.join(legacyDir, 'kilo.jsonc')]));
+    const hasLegacyPlugin = Boolean(findFirst([
+      path.join(legacyDir, 'plugins', 'contextbase-auto.js'),
+      path.join(legacyDir, 'plugin', 'contextbase-auto.js'),
+    ]));
+    // ~/.kilo solo se audita si tiene config propia o si es el unico directorio Kilo y tiene plugin;
+    // un ~/.kilo/skills creado por installSkill sin Kilo instalado no debe disparar advertencias.
+    if (hasLegacyCfg || (!exists(configDir) && hasLegacyPlugin)) {
+      dirs.push(legacyDir);
+    }
+  }
   return dirs.map((dir) => {
     const file = findFirst([path.join(dir, 'kilo.json'), path.join(dir, 'kilo.jsonc')]);
     const plugin = findFirst([path.join(dir, 'plugins', 'contextbase-auto.js'), path.join(dir, 'plugin', 'contextbase-auto.js')]);
@@ -416,6 +446,16 @@ function checkGlobalKilo(homeDir) {
       try { source = fs.readFileSync(info.plugin, 'utf8'); } catch { source = ''; }
       const verdict = validateOpenCodePluginSource(source);
       if (!verdict.ok) errors.push(`${info.plugin} no cumple el contrato: ${verdict.problems.join(', ')}`);
+    }
+  }
+
+  if (exists(path.join(homeDir, '.config', 'kilo'))) {
+    const legacyKiloPlugins = [
+      path.join(homeDir, '.kilo', 'plugins', 'contextbase-auto.js'),
+      path.join(homeDir, '.kilo', 'plugin', 'contextbase-auto.js'),
+    ].filter((candidate) => exists(candidate));
+    if (legacyKiloPlugins.length > 0) {
+      errors.push(`Duplicate plugin ID en Kilo legacy (${legacyKiloPlugins.join(', ')})`);
     }
   }
 
@@ -648,11 +688,13 @@ function checkProjectShadow(root, globalInfo) {
 // Orquestacion
 // ---------------------------------------------------------------------------
 
+let sandboxHandshakeSeq = 0;
+
 async function collectChecks(state) {
   const info = inspectOpenCodeGlobal(state.homeDir);
   const checks = [
     checkGlobalOpenCodeConfig(info),
-    checkGlobalOpenCodePlugin(info),
+    checkGlobalOpenCodePlugin(info, state.homeDir),
     checkGlobalOpenCodeSchema(info),
     checkGlobalOpenCodeAgents(info),
     checkGlobalKilo(state.homeDir),
@@ -662,17 +704,14 @@ async function collectChecks(state) {
   // escribiria/refrescaria la config del proyecto, falseando la lectura.
   checks.push(checkProjectShadow(state.root, info));
   // El servidor MCP ejecuta autoEnsure en su cwd: el handshake corre en un sandbox
-  // temporal y se limpia, para no dejar scaffolding en el proyecto ni en el cwd real.
-  // Ruta FIJA (no acumula directorios): se limpia al empezar y se intenta limpiar
-  // al terminar. En Windows el proceso MCP puede retener el handle un instante, por
-  // eso la limpieza inicial es la que garantiza que nunca crezca.
-  const sandboxHandshake = path.join(os.tmpdir(), 'contextbase-doctor-handshake');
-  try { fs.rmSync(sandboxHandshake, { recursive: true, force: true }); } catch {}
+  // temporal por PID/secuencia para evitar carreras entre tests paralelos y se limpia al terminar.
+  const sandboxHandshake = path.join(os.tmpdir(), `contextbase-doctor-handshake-${process.pid}-${++sandboxHandshakeSeq}`);
+  try { fs.rmSync(sandboxHandshake, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch {}
   fs.mkdirSync(sandboxHandshake, { recursive: true });
   try {
     checks.push(await runMcpHandshake({ binPath: state.binPath, cwd: sandboxHandshake, timeoutMs: state.timeoutMs }));
   } finally {
-    try { fs.rmSync(sandboxHandshake, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(sandboxHandshake, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch {}
   }
   return checks;
 }

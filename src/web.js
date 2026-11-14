@@ -368,10 +368,9 @@ export function hydrateWorktreeMemory(rootCwd, worktreeRel, spiderMeta = {}) {
     }
   }
 
-  // Copiar plugins de OpenCode y Kilo dentro del worktree
+  // Copiar plugins de OpenCode y Kilo dentro del worktree (nunca el legacy .opencode/plugin singular)
   const pluginDirs = [
     ['.opencode', 'plugins', 'contextbase-auto.js'],
-    ['.opencode', 'plugin', 'contextbase-auto.js'],
     ['.kilo', 'plugins', 'contextbase-auto.js'],
     ['.kilo', 'rules', 'contextbase.md'],
     ['.kilocode', 'rules', 'contextbase.md'],

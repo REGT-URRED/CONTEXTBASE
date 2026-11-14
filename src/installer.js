@@ -83,6 +83,8 @@ export function installSkill(target = 'global', projectDir = process.cwd(), cust
 
     // 3. Kilo Code global (~/.kilo/skills y ~/.config/kilo/skills si existe)
     writeSkillsUnder(path.join(customHome, '.kilo', 'skills'));
+    fs.rmSync(path.join(customHome, '.kilo', 'plugin', 'contextbase-auto.js'), { force: true });
+    fs.rmSync(path.join(customHome, '.kilo', 'plugins', 'contextbase-auto.js'), { force: true });
     if (fs.existsSync(path.join(customHome, '.config', 'kilo'))) {
       writeSkillsUnder(path.join(customHome, '.config', 'kilo', 'skills'));
     }

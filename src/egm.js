@@ -309,9 +309,13 @@ const SIGLAS_ES_NO = new Set([
 // Hogares externos de agentes: son ubicaciones de OTRA herramienta (o del home del usuario),
 // no archivos de este repositorio. Un doc puede mencionarlos sin afirmar que vivan aqui.
 const HOGARES_EXTERNOS = [
-  '.github/', '.vscode/', '.gemini/', '.kilo/', '.kilocode/', '.opencode/', '.cursor/',
-  '.windsurf/', '.continue/', '.agents/', '.aider', '.cline', '.roo',
+  '.github/', '.vscode/', '.gemini/', '.kilo/', '.kilocode/', '.opencode/', '.claude/', '.cursor/',
+  '.windsurf/', '.continue/', '.agents/', '.pi/', '.hermes/', '.roo/', '.cline/', '.aider', '.goose',
 ];
+
+// Subdirectorios historicos de planificacion/archivo que se excluyen del pulso automatico y drift
+// por defecto (salvo solicitud explicita sobre esa ruta).
+const ARCHIVED_DOC_DIRS = new Set(['superpowers', 'archive', 'archived', 'history', 'legacy']);
 
 // Verbos de mencion o estado pasado: la linea narra un hecho historico ("pisaban", "rompia"),
 // no afirma que el archivo exista hoy. Se evalua sobre la linea sin acentos y en minusculas.
@@ -325,7 +329,7 @@ const PREPOSICION_MENCION = /(?:como|por\s+ejemplo|si\s+existe|opcional|antes(?:
 // Tipo de documento por nombre y H1. El estandar de diseño (alternativas + riesgos) solo aplica
 // a specs/designs reales; un README, un CHANGELOG o un doc de compatibilidad no es un spec.
 const KIND_SPEC = /(?:^|[^a-z])(?:spec|rfc|design|plan|propuesta)(?:[^a-z]|$)|especificaci|dise[nñ]o/;
-const KIND_REFERENCIA = /readme|compatibilidad|changelog|guia|faq|referencia|manual|troubleshoot|diagnostico|notas/;
+const KIND_REFERENCIA = /readme|compatibilidad|changelog|guia|faq|referencia|manual|troubleshoot|diagnostico|notas|funcionamiento|fundamentos|arquitectura|componentes|tasklist/;
 
 const CODE_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|cs|rb|php|sh|ps1|css|scss|less|html|vue|svelte)$/i;
 // Acepta separador posix y Windows: un doc escrito en Windows cita rutas con barra invertida
@@ -334,7 +338,11 @@ const PATH_RE = /(?:[A-Za-z0-9_.-]+[\/\\])+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/g;
 // Copia sin flag global: RegExp con /g es stateful y .test() avanza lastIndex.
 const PATH_ANY = /(?:[A-Za-z0-9_.-]+[\/\\])+[A-Za-z0-9_.-]*\.[A-Za-z0-9]+/;
 const CREATION = /\b(create|creating|modify|modifying|delete|deleting|new|nuevo|nueva|crear|creara|creará|creacion|creación|agregar|agrega|anadir|añadir|pendiente|renombrar|eliminar|to\s+create)\b/i;
-const DECISION = /\b(TODO|TBD|FIXME|XXX)\b|por\s+definir|por\s+decidir|a\s+definir/i;
+// TODO/TBD/FIXME/XXX exigen mayusculas para no confundir la palabra espanola "todo" con un pendiente;
+// las locuciones en espanol ("por definir", "por decidir", "a definir") si admiten mayusculas o minusculas.
+const DECISION_CAPS = /\b(?:TODO|TBD|FIXME|XXX)\b/;
+const DECISION_ES = /\b(?:por\s+definir|por\s+decidir|a\s+definir)\b/i;
+const matchDecisionMarker = (text) => text.match(DECISION_CAPS) || text.match(DECISION_ES);
 const VAGUE = /\b(el|este|ese)\s+(sistema|c[oó]digo|proyecto|m[oó]dulo|servicio)\b/i;
 const EXCLUSIVO = new Set([
   'rapido|simple', 'simple|rapido',
@@ -437,15 +445,18 @@ function docKind(ctx) {
   return 'general';
 }
 
-function walk(dir) {
+function walk(dir, opts = {}) {
+  const ignoreDirs = opts && opts.ignoreDirs;
   const out = [];
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     if (e.name === 'node_modules' || e.name === '.git') continue;
     const full = path.join(dir, e.name);
-    if (e.isDirectory()) out.push(...walk(full));
-    else if (e.isFile()) out.push(full);
+    if (e.isDirectory()) {
+      if (ignoreDirs && ignoreDirs.has(e.name.toLowerCase())) continue;
+      out.push(...walk(full, opts));
+    } else if (e.isFile()) out.push(full);
   }
   return out;
 }
@@ -607,7 +618,7 @@ function checkStructural(ctx) {
   for (const bad of tableProblems(ctx.lines)) {
     out.push(mk('egm-structural', 'major', 'tablas', 'structure:table:' + bad.line, bad.detail, 'linea ' + bad.line, 'propose_fix'));
   }
-  if (hs.length >= 3 && !hs.some(h => /contexto|objetivo|proposito|resumen|alcance/i.test(h.title))) {
+  if (ctx.kind !== 'referencia' && hs.length >= 3 && !hs.some(h => /contexto|objetivo|proposito|resumen|alcance/i.test(h.title))) {
     out.push(mk('egm-structural', 'major', 'secciones', 'structure:contexto', 'Falta la seccion de contexto, objetivo o alcance que exige el estandar.', 'headings: ' + hs.map(h => h.title).join(' | '), 'propose_fix'));
   }
   return { persona: 'egm-structural', status: 'completed', findings: out };
@@ -652,9 +663,10 @@ function checkStyle(ctx) {
       if (!m) continue;
       hypeWords.add(m[0].toLowerCase());
       const compound = m[0].length > word.length;
+      const refAdvisory = !compound && ctx.kind === 'referencia';
       out.push(mk('egm-style', compound ? 'nit' : 'major', 'hype', 'style:hype:' + m[0].toLowerCase(),
         '[' + (compound ? 'KEEP' : 'DROP') + '] Hype de marketing en la prosa: "' + m[0] + '".',
-        'linea ' + l.n + ': ' + snippet(plain), compound ? 'decline' : 'propose_fix'));
+        'linea ' + l.n + ': ' + snippet(plain), compound ? 'decline' : 'propose_fix', refAdvisory));
     }
     for (const rule of SLOP_PROSA) {
       const m = plain.match(rule.re);
@@ -714,7 +726,7 @@ function checkComprehension(ctx) {
       if (re.test(l.text)) {
         out.push(mk('egm-comprehension', 'major', 'terminos', 'term:' + term,
           'El termino "' + term + '" se usa antes de definirse.',
-          'uso en linea ' + l.n + ', definicion en linea ' + def.n, 'propose_fix'));
+          'uso en linea ' + l.n + ', definicion en linea ' + def.n, 'propose_fix', ctx.kind === 'referencia'));
         break;
       }
     }
@@ -741,9 +753,10 @@ function checkComprehension(ctx) {
 function checkImplementationReadiness(ctx) {
   if (!ctx.isMd) return skipped('egm-implementation-readiness');
   const out = [];
-  for (const l of ctx.lines) {
-    if (l.code) continue;
-    const m = l.text.match(DECISION);
+  // Evaluamos ctx.prose (excluye bloques de codigo y literales `...` en linea) para no
+  // marcar documentacion tecnica que explica comandos o palabras clave (p. ej. `TODO`/`FIXME`).
+  for (const l of ctx.prose) {
+    const m = matchDecisionMarker(l.text);
     if (!m) continue;
     out.push(mk('egm-implementation-readiness', 'major', 'decisiones-abiertas', 'marker:' + m[0].toLowerCase().trim(),
       'Decision abierta en el documento ("' + snippet(m[0]) + '"); la regla Zero-Decision lo impide.',
@@ -1436,8 +1449,11 @@ export function egmDrift({ cwd, docsDir } = {}) {
     };
   }
 
+  const explicitSegments = String(docsDir || '').split(/[\\/]+/).filter(Boolean).map(s => s.toLowerCase());
+  const includeArchived = explicitSegments.some(s => ARCHIVED_DOC_DIRS.has(s));
+
   let scanned = 0;
-  for (const file of walk(docs)) {
+  for (const file of walk(docs, includeArchived ? {} : { ignoreDirs: ARCHIVED_DOC_DIRS })) {
     if (!/\.md$/i.test(file)) continue;
     let text = '';
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
@@ -1447,10 +1463,11 @@ export function egmDrift({ cwd, docsDir } = {}) {
     const seen = new Set();
     for (const l of ctx.lines) {
       if (l.code) continue;
-      for (const ref of refsIn(l.text)) {
-        if (seen.has(ref)) continue;
-        seen.add(ref);
-        refs.push({ ref, creation: CREATION.test(l.text), n: l.n, text: l.text });
+      for (const hit of refsWithPos(l.text)) {
+        if (esMencion(hit.text, hit.index, hit.ref)) continue;
+        if (seen.has(hit.ref)) continue;
+        seen.add(hit.ref);
+        refs.push({ ref: hit.ref, creation: CREATION.test(l.text), n: l.n, text: l.text });
       }
     }
     const existing = refs.filter(r => !r.creation && fs.existsSync(path.join(root, r.ref))).map(r => r.ref);
@@ -1464,9 +1481,11 @@ export function egmDrift({ cwd, docsDir } = {}) {
         detail: 'El doc cita "' + r.ref + '" y el proyecto no lo tiene (linea ' + r.n + ').',
       });
     }
-    drift.push(...driftIncompleteModel(ctx, existing));
-    drift.push(...driftLogicShortcut(ctx, existing));
-    drift.push(...driftArchitecturalDivergence(ctx, root));
+    if (ctx.kind === 'spec') {
+      drift.push(...driftIncompleteModel(ctx, existing));
+      drift.push(...driftLogicShortcut(ctx, existing));
+      drift.push(...driftArchitecturalDivergence(ctx, root));
+    }
   }
 
   if (!drift.length) return { drift: [], docsDir: docs, missingDocs: false, scanned, message: 'No drift detected' };
@@ -1554,23 +1573,30 @@ function egmPaqueteVersion() {
 
 function egmPulseTarget(root, explicit) {
   if (explicit) return path.resolve(root, String(explicit));
-  // El modelo revisa DOCUMENTOS DE DISENO: el candidato natural es el spec mas
-  // reciente de docs/ (ahi viven los estandares EGM). fundamentos.md y README son
-  // inventarios/portadas: se usan solo si no hay documentos de diseno.
+  // El modelo revisa DOCUMENTOS DE DISENO y vigentes: excluye archivos historicos
+  // (superpowers/archive/legacy) salvo seleccion explicita, normaliza mtime futuros y
+  // prioriza el nivel superior de docs/ antes de caer a fundamentos.md / README.md.
   const docsDir = path.join(root, 'docs');
+  const now = Date.now();
   try {
     const docs = [];
-    const walk = (dir) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) { walk(full); continue; }
-        if (!/\.md$/i.test(entry.name)) continue;
-        try { docs.push({ file: full, mtime: fs.statSync(full).mtimeMs }); } catch { /* ilegible */ }
-      }
-    };
-    walk(docsDir);
+    for (const full of walk(docsDir, { ignoreDirs: ARCHIVED_DOC_DIRS })) {
+      if (!/\.md$/i.test(path.basename(full))) continue;
+      try {
+        const rawMtime = fs.statSync(full).mtimeMs;
+        docs.push({
+          file: full,
+          topLevel: path.dirname(full) === docsDir,
+          mtime: Math.min(rawMtime, now),
+        });
+      } catch { /* ilegible */ }
+    }
     if (docs.length > 0) {
-      docs.sort((a, b) => (b.mtime - a.mtime) || (b.file > a.file ? 1 : -1));
+      docs.sort((a, b) =>
+        (b.mtime - a.mtime) ||
+        ((b.topLevel ? 1 : 0) - (a.topLevel ? 1 : 0)) ||
+        (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)
+      );
       return docs[0].file;
     }
   } catch { /* sin docs/: se cae a los candidatos base */ }

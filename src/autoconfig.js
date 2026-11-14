@@ -179,6 +179,15 @@ export function getNodePath() {
   return process.execPath.replace(/\\/g, '/');
 }
 
+export function getGlobalPreferredBinPath(options = {}) {
+  if (options.binPath) return String(options.binPath).replace(/\\/g, '/');
+  if (!process.env.NODE_TEST_CONTEXT && process.env.APPDATA) {
+    const cand = path.join(process.env.APPDATA, 'npm', 'node_modules', 'contextbase', 'bin', 'contextbase.js');
+    if (fs.existsSync(cand)) return cand.replace(/\\/g, '/');
+  }
+  return getBinPath();
+}
+
 /**
  * Lee un archivo JSON/JSONC de configuracion.
  * Devuelve `null` si el archivo existe pero NO parsea (config corrupto).
@@ -270,13 +279,19 @@ export function hasStaleAgentConfig(projectDir, options = {}) {
   }
   try {
     const oc = readJsonSafe(opencodeFile);
-    const cmd = oc && oc.mcp && oc.mcp.contextbase && oc.mcp.contextbase.command;
+    const mcpObj = oc && oc.mcp && typeof oc.mcp === 'object' ? oc.mcp : null;
+    const entry = (mcpObj && mcpObj.servers && mcpObj.servers.contextbase) || (mcpObj && mcpObj.contextbase);
+    const cmd = entry && entry.command;
     if (!Array.isArray(cmd) || cmd.length < 2) return true;
     const nodeBin = cmd[0];
     const cbBin = cmd[1];
     if (!fs.existsSync(nodeBin) || !fs.existsSync(cbBin)) return true;
     const pluginSrc = fs.readFileSync(pluginFile, 'utf8');
-    if (!pluginSrc.includes('resolveCbCommand') || !pluginSrc.includes(getBinPath())) return true;
+    if (!pluginSrc.includes('resolveCbCommand') || !validateOpenCodePluginSource(pluginSrc).ok) return true;
+    const m = /DEFAULT_CB_BIN\s*=\s*"([^"]+)"/.exec(pluginSrc);
+    const embeddedBin = m ? m[1] : '';
+    if (!embeddedBin || !fs.existsSync(embeddedBin)) return true;
+    if (pluginFile === localPluginFile && embeddedBin !== getBinPath()) return true;
   } catch {
     return true;
   }
@@ -396,8 +411,10 @@ export function buildOpenCodePluginSource(binPath = getBinPath(), nodePath = get
     '',
     'function resolveCbCommand(cwd) {',
     '  const nodeBin = fs.existsSync(DEFAULT_NODE_BIN) ? DEFAULT_NODE_BIN : (process.execPath || "node");',
+    '  const globalNpmBin = process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "contextbase", "bin", "contextbase.js") : "";',
     '  const candidates = [',
     '    DEFAULT_CB_BIN,',
+    '    globalNpmBin,',
     '    path.join(cwd, "bin", "contextbase.js"),',
     '    path.join(cwd, "..", "..", "bin", "contextbase.js"),',
     '    path.join(cwd, "node_modules", "contextbase", "bin", "contextbase.js")',
@@ -856,7 +873,7 @@ export function ensureGitExclude(projectDir) {
  * Configura kilo.json, .kilo/ y .kilocode/ para ejecucion 100% automatica en Kilo Code.
  */
 export function configureKilo(projectDir, options = {}) {
-  const binPath = options.binPath || getBinPath();
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = options.nodePath || getNodePath();
   const written = [];
   const pluginCode = buildOpenCodePluginSource(binPath, nodePath);
@@ -953,7 +970,7 @@ export function configureKilo(projectDir, options = {}) {
  * Configura opencode.json y .opencode/ (plugins + plugin + skills) para ejecucion 100% automatica en OpenCode.
  */
 export function configureOpenCode(projectDir, options = {}) {
-  const binPath = options.binPath || getBinPath();
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = options.nodePath || getNodePath();
   const written = [];
   const pluginFile = path.join(projectDir, '.opencode', 'plugins', 'contextbase-auto.js');
@@ -1098,7 +1115,7 @@ export function configureOpenCode(projectDir, options = {}) {
  * Configura .mcp.json y hooks de ciclo de vida en .claude/settings.json para Claude Code.
  */
 export function configureClaude(projectDir, options = {}) {
-  const binPath = options.binPath || getBinPath();
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = options.nodePath || getNodePath();
   const written = [];
 
@@ -1166,7 +1183,7 @@ export function configureClaude(projectDir, options = {}) {
  * Configura Cursor (.cursor/mcp.json y .cursor/rules/contextbase.mdc) y Windsurf.
  */
 export function configureCursorAndIde(projectDir, options = {}) {
-  const binPath = options.binPath || getBinPath();
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = options.nodePath || getNodePath();
   const written = [];
 
@@ -1392,9 +1409,577 @@ function hostSchemaIsV2(homeDir = os.homedir()) {
   }
 }
 
+export function resolveHermesHome(homeDir = os.homedir()) {
+  const resolvedHome = path.resolve(homeDir || os.homedir());
+  const realHome = path.resolve(os.homedir());
+  const isRealHome = process.platform === 'win32'
+    ? resolvedHome.toLowerCase() === realHome.toLowerCase()
+    : resolvedHome === realHome;
+  if (isRealHome && process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    const localHermes = path.join(process.env.LOCALAPPDATA, 'hermes');
+    if (fs.existsSync(localHermes)) return localHermes;
+  }
+  return path.join(resolvedHome, '.hermes');
+}
+
+export function buildPiExtensionSource(binPath = getGlobalPreferredBinPath(), nodePath = getNodePath()) {
+  const safeBin = JSON.stringify(String(binPath).replace(/\\/g, '/'));
+  const safeNode = JSON.stringify(String(nodePath).replace(/\\/g, '/'));
+  return [
+    '// Administrado por ContextBase - Extension automatica global para Pi Coding Agent',
+    "import { spawn } from 'node:child_process';",
+    "import fs from 'node:fs';",
+    "import os from 'node:os';",
+    "import path from 'node:path';",
+    '',
+    `const DEFAULT_NODE_BIN = ${safeNode};`,
+    `const DEFAULT_CB_BIN = ${safeBin};`,
+    "const MUTATING_TOOLS = new Set(['edit', 'write', 'bash', 'powershell', 'write_file', 'edit_file', 'apply_patch']);",
+    'const DIGEST_CACHE = new Map();',
+    'const INJECTED_SESSIONS = new Set();',
+    '',
+    'function resolveCmd() {',
+    '  const nodeBin = fs.existsSync(DEFAULT_NODE_BIN) ? DEFAULT_NODE_BIN : process.execPath;',
+    '  if (fs.existsSync(DEFAULT_CB_BIN)) return [nodeBin, DEFAULT_CB_BIN];',
+    "  if (process.platform === 'win32' && process.env.APPDATA) {",
+    "    const cand = path.join(process.env.APPDATA, 'npm', 'node_modules', 'contextbase', 'bin', 'contextbase.js');",
+    '    if (fs.existsSync(cand)) return [nodeBin, cand];',
+    '  }',
+    '  return null;',
+    '}',
+    '',
+    'function runHookAsync(event, cwd, payload) {',
+    '  const base = resolveCmd();',
+    '  if (!base) return Promise.resolve("");',
+    '  return new Promise((resolve) => {',
+    '    let out = "";',
+    '    let settled = false;',
+    '    let child = null;',
+    '    const done = (val) => {',
+    '      if (settled) return;',
+    '      settled = true;',
+    '      clearTimeout(timer);',
+    '      resolve(val);',
+    '    };',
+    '    const timer = setTimeout(() => {',
+    '      try { if (child && !child.killed) child.kill(); } catch {}',
+    '      done("");',
+    '    }, 4500);',
+    '    timer.unref();',
+    '    try {',
+    "      child = spawn(base[0], [...base.slice(1), 'hook-run', event], {",
+    '        cwd,',
+    "        stdio: ['pipe', 'pipe', 'ignore'],",
+    '        windowsHide: true',
+    '      });',
+    "      child.on('error', () => done(''));",
+    '      if (child.stdout) {',
+    "        child.stdout.setEncoding('utf8');",
+    "        child.stdout.on('data', (chunk) => { if (out.length < 32768) out += chunk; });",
+    '      }',
+    "      child.on('close', (code) => done(code === 0 ? out.trim() : ''));",
+    '      if (child.stdin) {',
+    "        child.stdin.on('error', () => {});",
+    '        child.stdin.end(payload ? JSON.stringify(payload) : "");',
+    '      }',
+    '    } catch {',
+    '      done("");',
+    '    }',
+    '  });',
+    '}',
+    '',
+    'function fireAndForgetHook(event, cwd, payload) {',
+    '  const base = resolveCmd();',
+    '  if (!base) return;',
+    '  try {',
+    "    const child = spawn(base[0], [...base.slice(1), 'hook-run', event], {",
+    '      cwd,',
+    "      stdio: ['pipe', 'ignore', 'ignore'],",
+    '      detached: true,',
+    '      windowsHide: true',
+    '    });',
+    "    child.on('error', () => {});",
+    '    if (child.stdin) {',
+    "      child.stdin.on('error', () => {});",
+    '      child.stdin.end(payload ? JSON.stringify(payload) : "");',
+    '    }',
+    '    child.unref();',
+    '  } catch {}',
+    '}',
+    '',
+    'function isRootOrHome(dir) {',
+    '  const abs = path.resolve(dir || process.cwd());',
+    '  if (path.dirname(abs) === abs) return true;',
+    '  const home = path.resolve(os.homedir());',
+    "  return process.platform === 'win32' ? abs.toLowerCase() === home.toLowerCase() : abs === home;",
+    '}',
+    '',
+    'function sessionKeyFor(cwd, ctx) {',
+    '  try {',
+    '    const sm = ctx && ctx.sessionManager;',
+    "    const sid = (sm && typeof sm.getSessionId === 'function' && sm.getSessionId())",
+    "      || (sm && typeof sm.getSessionFile === 'function' && sm.getSessionFile())",
+    "      || 'default';",
+    '    return `${cwd}::${sid}`;',
+    '  } catch {',
+    '    return `${cwd}::default`;',
+    '  }',
+    '}',
+    '',
+    'export default function contextbasePiExtension(pi) {',
+    "  pi.on('before_agent_start', async (event, ctx) => {",
+    "    if (!event || event.messageType === 'custom') return undefined;",
+    '    const cwd = path.resolve((ctx && ctx.cwd) || process.cwd());',
+    '    if (isRootOrHome(cwd)) return undefined;',
+    '    const key = sessionKeyFor(cwd, ctx);',
+    '    if (INJECTED_SESSIONS.has(key)) return undefined;',
+    "    const digest = DIGEST_CACHE.get(cwd) || (await runHookAsync('session-start', cwd, { cwd }));",
+    '    if (!digest) return undefined;',
+    '    if (DIGEST_CACHE.size > 64) DIGEST_CACHE.clear();',
+    '    DIGEST_CACHE.set(cwd, digest);',
+    '    if (INJECTED_SESSIONS.size > 128) INJECTED_SESSIONS.clear();',
+    '    INJECTED_SESSIONS.add(key);',
+    '    return {',
+    '      message: {',
+    "        customType: 'contextbase-digest',",
+    '        content: `<!-- CONTEXTBASE:LIVE_DIGEST -->\\n${digest}\\n<!-- /CONTEXTBASE:LIVE_DIGEST -->`,',
+    '        display: false',
+    '      }',
+    '    };',
+    '  });',
+    '',
+    "  pi.on('tool_execution_end', async (event, ctx) => {",
+    '    if (!event || event.isError) return;',
+    "    const tool = String(event.toolName || '').toLowerCase();",
+    "    const mutating = MUTATING_TOOLS.has(tool) || tool.startsWith('mcp__contextbase__');",
+    '    if (!mutating) return;',
+    '    const cwd = path.resolve((ctx && ctx.cwd) || process.cwd());',
+    '    if (isRootOrHome(cwd)) return;',
+    '    DIGEST_CACHE.delete(cwd);',
+    "    fireAndForgetHook('post-tool', cwd, { cwd });",
+    '  });',
+    '',
+    "  pi.on('agent_end', async (_event, ctx) => {",
+    '    const cwd = path.resolve((ctx && ctx.cwd) || process.cwd());',
+    '    if (isRootOrHome(cwd)) return;',
+    '    DIGEST_CACHE.delete(cwd);',
+    "    fireAndForgetHook('session-stop', cwd, { cwd });",
+    '  });',
+    '}',
+    ''
+  ].join('\n');
+}
+
+function buildHermesPluginSource(binPath, nodePath) {
+  const safeBin = JSON.stringify(String(binPath).replace(/\\/g, '/'));
+  const safeNode = JSON.stringify(String(nodePath).replace(/\\/g, '/'));
+  return [
+    '# Administrado por ContextBase - No editar manualmente',
+    'from __future__ import annotations',
+    '',
+    'import json',
+    'import os',
+    'import shutil',
+    'import subprocess',
+    'from typing import Any',
+    '',
+    `DEFAULT_NODE_BIN = ${safeNode}`,
+    `DEFAULT_CB_BIN = ${safeBin}`,
+    '_MUTATING_TOOLS = {"write_file", "edit_file", "patch", "apply_patch", "replace_in_file", "terminal", "bash"}',
+    '_INJECTED_SESSIONS: set[tuple[str, str]] = set()',
+    '_DIGEST_CACHE: dict[str, str] = {}',
+    '',
+    'def _is_home_or_root(cwd: str) -> bool:',
+    '    abs_cwd = os.path.abspath(cwd)',
+    '    parent = os.path.dirname(abs_cwd)',
+    '    if parent == abs_cwd:',
+    '        return True',
+    '    return os.path.normcase(abs_cwd) == os.path.normcase(os.path.abspath(os.path.expanduser("~")))',
+    '',
+    'def _resolve_cmd() -> list[str] | None:',
+    '    node_bin = DEFAULT_NODE_BIN if os.path.isfile(DEFAULT_NODE_BIN) else (shutil.which("node") or "node")',
+    '    if os.path.isfile(DEFAULT_CB_BIN):',
+    '        return [node_bin, DEFAULT_CB_BIN]',
+    '    if os.name == "nt":',
+    '        appdata = os.environ.get("APPDATA", "")',
+    '        cand = os.path.join(appdata, "npm", "node_modules", "contextbase", "bin", "contextbase.js") if appdata else ""',
+    '        if cand and os.path.isfile(cand):',
+    '            return [node_bin, cand]',
+    '    cb_exe = shutil.which("contextbase")',
+    '    if cb_exe:',
+    '        return [cb_exe]',
+    '    return None',
+    '',
+    'def _run_hook(event: str, cwd: str, payload: dict[str, Any] | None = None, *, detach: bool = False) -> str:',
+    '    if _is_home_or_root(cwd):',
+    '        return ""',
+    '    base = _resolve_cmd()',
+    '    if not base:',
+    '        return ""',
+    '    cmd = [*base, "hook-run", event]',
+    '    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)',
+    '    stdin_data = json.dumps(payload) if payload is not None else None',
+    '    try:',
+    '        if detach:',
+    '            kwargs: dict[str, Any] = {"cwd": cwd, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "creationflags": flags}',
+    '            if stdin_data is not None:',
+    '                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, **kwargs)',
+    '                try:',
+    '                    if proc.stdin:',
+    '                        proc.stdin.write(stdin_data.encode("utf-8"))',
+    '                        proc.stdin.close()',
+    '                except Exception:',
+    '                    pass',
+    '            else:',
+    '                subprocess.Popen(cmd, stdin=subprocess.DEVNULL, **kwargs)',
+    '            return ""',
+    '        res = subprocess.run(',
+    '            cmd,',
+    '            cwd=cwd,',
+    '            input=stdin_data,',
+    '            text=True,',
+    '            capture_output=True,',
+    '            timeout=5,',
+    '            creationflags=flags,',
+    '        )',
+    '        return (res.stdout or "").strip() if res.returncode == 0 else ""',
+    '    except Exception:',
+    '        return ""',
+    '',
+    'def register(ctx: Any) -> None:',
+    '    def on_session_start(**kwargs: Any) -> None:',
+    '        cwd = os.getcwd()',
+    '        digest = _run_hook("session-start", cwd)',
+    '        if digest:',
+    '            _DIGEST_CACHE[cwd] = digest',
+    '',
+    '    def pre_llm_call(**kwargs: Any) -> dict[str, Any] | None:',
+    '        cwd = os.getcwd()',
+    '        sid = str(kwargs.get("session_id") or "default")',
+    '        key = (cwd, sid)',
+    '        if key in _INJECTED_SESSIONS and not kwargs.get("is_first_turn"):',
+    '            return None',
+    '        digest = _DIGEST_CACHE.get(cwd) or _run_hook("session-start", cwd)',
+    '        if not digest:',
+    '            return None',
+    '        _DIGEST_CACHE[cwd] = digest',
+    '        _INJECTED_SESSIONS.add(key)',
+    '        if len(_INJECTED_SESSIONS) > 128:',
+    '            _INJECTED_SESSIONS.clear()',
+    '        return {"context": f"<!-- CONTEXTBASE:LIVE_DIGEST -->\\n{digest}\\n<!-- /CONTEXTBASE:LIVE_DIGEST -->"}',
+    '',
+    '    def post_tool_call(**kwargs: Any) -> None:',
+    '        tool_name = str(kwargs.get("tool_name") or "").lower()',
+    '        args = kwargs.get("args") if isinstance(kwargs.get("args"), dict) else {}',
+    '        if tool_name not in _MUTATING_TOOLS and not any(k in args for k in ("path", "file_path", "filePath")):',
+    '            return',
+    '        cwd = os.getcwd()',
+    '        _DIGEST_CACHE.pop(cwd, None)',
+    '        _run_hook("post-tool", cwd, {"cwd": cwd, "tool_input": args}, detach=True)',
+    '',
+    '    def on_session_end(**kwargs: Any) -> None:',
+    '        cwd = os.getcwd()',
+    '        sid = str(kwargs.get("session_id") or "default")',
+    '        _INJECTED_SESSIONS.discard((cwd, sid))',
+    '        _DIGEST_CACHE.pop(cwd, None)',
+    '        _run_hook("session-stop", cwd, detach=True)',
+    '',
+    '    ctx.register_hook("on_session_start", on_session_start)',
+    '    ctx.register_hook("pre_llm_call", pre_llm_call)',
+    '    ctx.register_hook("post_tool_call", post_tool_call)',
+    '    ctx.register_hook("on_session_end", on_session_end)',
+    ''
+  ].join('\n');
+}
+
+function writeIfChanged(filePath, content, configured) {
+  let prev = null;
+  try {
+    if (fs.existsSync(filePath)) prev = fs.readFileSync(filePath, 'utf8');
+  } catch { prev = null; }
+  if (prev === content) return false;
+  writeAtomic(filePath, content);
+  configured.push(filePath);
+  return true;
+}
+
+function mergeMcpServersFile(filePath, entry, failures, op, configured) {
+  const parsed = readJsonSafe(filePath);
+  if (parsed === null && fs.existsSync(filePath)) {
+    backupConfig(filePath);
+    failures.push(reportConfigError('CONFIG_INVALID_JSON', op, 'El archivo no es JSON valido; no se modifico.', { file: filePath }));
+    return false;
+  }
+  const cfg = parsed ? { ...parsed } : {};
+  const servers = (cfg.mcpServers && typeof cfg.mcpServers === 'object' && !Array.isArray(cfg.mcpServers))
+    ? { ...cfg.mcpServers }
+    : {};
+  if (configEq(servers.contextbase, entry)) return false;
+  if (fs.existsSync(filePath)) backupConfig(filePath);
+  servers.contextbase = entry;
+  cfg.mcpServers = servers;
+  writeAtomic(filePath, JSON.stringify(cfg, null, 2) + '\n');
+  configured.push(filePath);
+  return true;
+}
+
+function upsertCommandHooksList(list, needle, targetCmd, wrapped) {
+  const items = Array.isArray(list) ? JSON.parse(JSON.stringify(list)) : [];
+  let updated = false;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    if (wrapped && Array.isArray(item.hooks)) {
+      for (const inner of item.hooks) {
+        if (inner && typeof inner.command === 'string' && inner.command.includes(needle)) {
+          inner.command = targetCmd;
+          updated = true;
+        }
+      }
+    } else if (typeof item.command === 'string' && item.command.includes(needle)) {
+      item.command = targetCmd;
+      updated = true;
+    }
+  }
+  if (!updated) {
+    items.push(wrapped
+      ? { matcher: needle === 'hook-run post-tool' ? 'Write|Edit|MultiEdit' : '', hooks: [{ type: 'command', command: targetCmd }] }
+      : { type: 'command', command: targetCmd });
+  }
+  return items;
+}
+
+function configureClaudeGlobal(homeDir, binPath, nodePath, forceGlobal, configured, failures) {
+  const claudeDir = path.join(homeDir, '.claude');
+  const claudeJson = path.join(homeDir, '.claude.json');
+  if (!forceGlobal && !fs.existsSync(claudeDir) && !fs.existsSync(claudeJson)) return;
+
+  mergeMcpServersFile(
+    claudeJson,
+    { type: 'stdio', command: nodePath, args: [binPath, 'mcp'] },
+    failures,
+    'autoConfigureGlobal.claude.mcp',
+    configured
+  );
+
+  const settingsFile = path.join(claudeDir, 'settings.json');
+  const parsed = readJsonSafe(settingsFile);
+  if (parsed === null && fs.existsSync(settingsFile)) {
+    backupConfig(settingsFile);
+    failures.push(reportConfigError('CONFIG_INVALID_JSON', 'autoConfigureGlobal.claude.settings', 'El archivo no es JSON valido; no se modifico.', { file: settingsFile }));
+    return;
+  }
+  const next = parsed ? JSON.parse(JSON.stringify(parsed)) : {};
+  if (!next.permissions || typeof next.permissions !== 'object') next.permissions = {};
+  next.permissions.allow = ensureArrayItem(next.permissions.allow, 'mcp__contextbase__*');
+  if (!next.hooks || typeof next.hooks !== 'object') next.hooks = {};
+
+  const cmdStart = `"${nodePath}" "${binPath}" hook-run session-start`;
+  const cmdPost = `"${nodePath}" "${binPath}" hook-run post-tool`;
+  const cmdStop = `"${nodePath}" "${binPath}" hook-run session-stop`;
+
+  next.hooks.SessionStart = upsertCommandHooksList(next.hooks.SessionStart, 'hook-run session-start', cmdStart, true);
+  next.hooks.PostToolUse = upsertCommandHooksList(next.hooks.PostToolUse, 'hook-run post-tool', cmdPost, true);
+  next.hooks.Stop = upsertCommandHooksList(next.hooks.Stop, 'hook-run session-stop', cmdStop, true);
+
+  if (parsed && configEq(parsed, next)) return;
+  if (fs.existsSync(settingsFile)) backupConfig(settingsFile);
+  writeAtomic(settingsFile, JSON.stringify(next, null, 2) + '\n');
+  configured.push(settingsFile);
+}
+
+function configureGeminiGlobal(homeDir, binPath, nodePath, forceGlobal, configured, failures) {
+  const geminiDir = path.join(homeDir, '.gemini');
+  if (!forceGlobal && !fs.existsSync(geminiDir)) return;
+
+  mergeMcpServersFile(
+    path.join(geminiDir, 'settings.json'),
+    { command: nodePath, args: [binPath, 'mcp'], trust: true },
+    failures,
+    'autoConfigureGlobal.gemini.settings',
+    configured
+  );
+  mergeMcpServersFile(
+    path.join(geminiDir, 'config', 'mcp_config.json'),
+    { command: nodePath, args: [binPath, 'mcp'] },
+    failures,
+    'autoConfigureGlobal.gemini.mcp',
+    configured
+  );
+
+  const hooksFile = path.join(geminiDir, 'config', 'hooks.json');
+  const parsedHooks = readJsonSafe(hooksFile);
+  if (parsedHooks === null && fs.existsSync(hooksFile)) {
+    backupConfig(hooksFile);
+    failures.push(reportConfigError('CONFIG_INVALID_JSON', 'autoConfigureGlobal.gemini.hooks', 'El archivo no es JSON valido; no se modifico.', { file: hooksFile }));
+  } else {
+    const nextHooks = parsedHooks ? { ...parsedHooks } : {};
+    const wantCbHooks = {
+      SessionStart: [
+        { type: 'command', command: `"${nodePath}" "${binPath}" hook-run session-start --antigravity`, timeout: 10 }
+      ],
+      PostToolUse: [
+        {
+          matcher: 'write_file|edit_file|replace_file_content|multi_replace_file_content|run_command',
+          hooks: [{ type: 'command', command: `"${nodePath}" "${binPath}" hook-run post-tool`, timeout: 10 }]
+        }
+      ],
+      Stop: [
+        { type: 'command', command: `"${nodePath}" "${binPath}" hook-run session-stop`, timeout: 10 }
+      ]
+    };
+    if (!parsedHooks || !configEq(parsedHooks.contextbase, wantCbHooks)) {
+      if (fs.existsSync(hooksFile)) backupConfig(hooksFile);
+      nextHooks.contextbase = wantCbHooks;
+      writeAtomic(hooksFile, JSON.stringify(nextHooks, null, 2) + '\n');
+      configured.push(hooksFile);
+    }
+  }
+
+  writeIfChanged(path.join(geminiDir, 'rules', 'contextbase.md'), CONTEXTBASE_RULE_BLOCK + '\n', configured);
+}
+
+function updateHermesYamlText(raw, binPath, nodePath) {
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const lines = raw.split(/\r?\n/);
+
+  let inPlugins = false;
+  let enabledUpdated = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[a-zA-Z0-9_]+:/.test(line)) {
+      inPlugins = line.startsWith('plugins:');
+      continue;
+    }
+    if (!inPlugins) continue;
+    const inlineMatch = /^(\s+enabled:\s*\[)([^\]]*)(\].*)$/.exec(line);
+    if (inlineMatch) {
+      const items = inlineMatch[2].split(',').map((s) => s.trim()).filter(Boolean);
+      if (!items.includes('contextbase')) items.push('contextbase');
+      lines[i] = `${inlineMatch[1]}${items.join(', ')}${inlineMatch[3]}`;
+      enabledUpdated = true;
+      break;
+    }
+  }
+  if (!enabledUpdated) {
+    const pIdx = lines.findIndex((l) => /^plugins:\s*(#.*)?$/.test(l));
+    if (pIdx >= 0) lines.splice(pIdx + 1, 0, '  enabled: [contextbase]');
+  }
+
+  const mcpBlock = [
+    '  contextbase:',
+    `    command: ${JSON.stringify(String(nodePath).replace(/\\/g, '/'))}`,
+    '    args:',
+    `      - ${JSON.stringify(String(binPath).replace(/\\/g, '/'))}`,
+    '      - "mcp"',
+    '    enabled: true'
+  ];
+
+  const mcpIdx = lines.findIndex((l) => /^mcp_servers:\s*(#.*)?$/.test(l));
+  if (mcpIdx === -1) {
+    if (lines.length && lines[lines.length - 1] !== '') lines.push('');
+    lines.push('mcp_servers:', ...mcpBlock);
+  } else {
+    let mcpEnd = lines.length;
+    for (let i = mcpIdx + 1; i < lines.length; i += 1) {
+      if (/^[a-zA-Z0-9_]+:/.test(lines[i])) {
+        mcpEnd = i;
+        break;
+      }
+    }
+    let cbStart = -1;
+    let cbEnd = -1;
+    for (let i = mcpIdx + 1; i < mcpEnd; i += 1) {
+      if (/^  contextbase:\s*(#.*)?$/.test(lines[i])) {
+        cbStart = i;
+        cbEnd = mcpEnd;
+        for (let j = i + 1; j < mcpEnd; j += 1) {
+          if (/^  [a-zA-Z0-9_-]+:/.test(lines[j])) {
+            cbEnd = j;
+            break;
+          }
+        }
+        break;
+      }
+    }
+    if (cbStart >= 0) {
+      lines.splice(cbStart, cbEnd - cbStart, ...mcpBlock);
+    } else {
+      lines.splice(mcpEnd, 0, ...mcpBlock);
+    }
+  }
+
+  return lines.join(eol);
+}
+
+function configureHermesGlobal(homeDir, binPath, nodePath, forceGlobal, configured, failures) {
+  const hermesHome = resolveHermesHome(homeDir);
+  if (!forceGlobal && !fs.existsSync(hermesHome)) return;
+
+  const pluginDir = path.join(hermesHome, 'plugins', 'contextbase');
+  writeIfChanged(path.join(pluginDir, '__init__.py'), buildHermesPluginSource(binPath, nodePath), configured);
+  const yamlManifest = [
+    '# Administrado por ContextBase',
+    'name: contextbase',
+    'version: "1.5.0"',
+    'description: "Memoria persistente automatica, Telarana de Agentes y bitacora ContextBase"',
+    'author: "ContextBase"',
+    'kind: standalone',
+    'provides_hooks:',
+    '  - on_session_start',
+    '  - pre_llm_call',
+    '  - post_tool_call',
+    '  - on_session_end',
+    ''
+  ].join('\n');
+  writeIfChanged(path.join(pluginDir, 'plugin.yaml'), yamlManifest, configured);
+
+  const cfgFile = path.join(hermesHome, 'config.yaml');
+  if (fs.existsSync(cfgFile)) {
+    try {
+      const raw = fs.readFileSync(cfgFile, 'utf8');
+      const next = updateHermesYamlText(raw, binPath, nodePath);
+      if (next !== raw) {
+        backupConfig(cfgFile);
+        writeAtomic(cfgFile, next);
+        configured.push(cfgFile);
+      }
+    } catch (err) {
+      failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal.hermes', err.message, { file: cfgFile }));
+    }
+  }
+}
+
+function configurePiGlobal(homeDir, binPath, nodePath, forceGlobal, configured, failures) {
+  const piDir = path.join(homeDir, '.pi');
+  if (!forceGlobal && !fs.existsSync(piDir)) return;
+
+  mergeMcpServersFile(
+    path.join(piDir, 'agent', 'mcp.json'),
+    {
+      command: nodePath,
+      args: [binPath, 'mcp'],
+      description: 'Memoria tecnica persistente, tareas, auditoria preventiva, guardia de reglas, EGM y Telarana (Web/Swarm).'
+    },
+    failures,
+    'autoConfigureGlobal.pi.mcp',
+    configured
+  );
+
+  writeIfChanged(
+    path.join(piDir, 'agent', 'extensions', 'contextbase-auto.js'),
+    buildPiExtensionSource(binPath, nodePath),
+    configured
+  );
+
+  // Evita advertencia de skill duplicada en Pi (las skills globales ya viven en ~/.agents/skills/).
+  for (const name of ['contextbase', 'contextbase-egm']) {
+    try { fs.rmSync(path.join(piDir, 'agent', 'skills', name), { recursive: true, force: true }); } catch {}
+  }
+}
+
 export function autoConfigureGlobal(options = {}) {
   const homeDir = options.homeDir || os.homedir();
-  const binPath = options.binPath || getBinPath();
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = options.nodePath || getNodePath();
   const configured = [];
   const failures = [];
@@ -1418,9 +2003,10 @@ export function autoConfigureGlobal(options = {}) {
     const pluginPath = path.join(opencodeGlobalDir, 'plugins', 'contextbase-auto.js');
     if (pluginCode) {
       try {
-        writeAtomic(pluginPath, pluginCode);
-        configured.push(pluginPath);
+        writeIfChanged(pluginPath, pluginCode, configured);
         removeFileIfExists(path.join(opencodeGlobalDir, 'plugin', 'contextbase-auto.js'));
+        removeFileIfExists(path.join(homeDir, '.opencode', 'plugin', 'contextbase-auto.js'));
+        removeFileIfExists(path.join(homeDir, '.opencode', 'plugins', 'contextbase-auto.js'));
       } catch (err) {
         failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
       }
@@ -1435,6 +2021,10 @@ export function autoConfigureGlobal(options = {}) {
           value(cfg) {
             cfg.plugins = stripPluginFilePaths(cfg.plugins);
             if (!Array.isArray(cfg.permissions)) cfg.plugin = stripPluginFilePaths(cfg.plugin);
+            const esV2 = Array.isArray(cfg.permissions)
+              || Array.isArray(cfg.plugins)
+              || (cfg.agents && typeof cfg.agents === 'object')
+              || Boolean(cfg.mcp && typeof cfg.mcp === 'object' && cfg.mcp.servers);
             if (Array.isArray(cfg.permissions)) {
               const already = cfg.permissions.some((p) => p && p.action === 'contextbase_*');
               if (!already) cfg.permissions = [...cfg.permissions, { action: 'contextbase_*', resource: '*', effect: 'allow' }];
@@ -1445,7 +2035,9 @@ export function autoConfigureGlobal(options = {}) {
               };
             }
             if (!cfg.mcp || typeof cfg.mcp !== 'object') cfg.mcp = {};
-            if (cfg.mcp.servers && typeof cfg.mcp.servers === 'object') {
+            if (esV2) {
+              delete cfg.mcp.contextbase;
+              if (!cfg.mcp.servers || typeof cfg.mcp.servers !== 'object') cfg.mcp.servers = {};
               cfg.mcp.servers.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
             } else {
               cfg.mcp.contextbase = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
@@ -1461,6 +2053,10 @@ export function autoConfigureGlobal(options = {}) {
             // El esquema v2 usa `permissions` (array de {action,resource,effect}); v1 usaba
             // `permission` (objeto). Escribir la clave legacy en un config v2 lo invalida y el
             // host lo descarta (los agentes pierden color y los MCP dejan de cargar).
+            const esV2 = Array.isArray(parsed.permissions)
+              || Array.isArray(parsed.plugins)
+              || (parsed.agents && typeof parsed.agents === 'object')
+              || Boolean(parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers);
             if (Array.isArray(parsed.permissions)) {
               const already = parsed.permissions.some(
                 (p) => p && p.action === 'contextbase_*' && (p.effect === 'allow' || p.effect === undefined)
@@ -1482,17 +2078,21 @@ export function autoConfigureGlobal(options = {}) {
               }
             }
             const mcpServers =
-              parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers && typeof parsed.mcp.servers === 'object';
+              Boolean(parsed.mcp && typeof parsed.mcp === 'object' && parsed.mcp.servers && typeof parsed.mcp.servers === 'object');
             const want = { type: 'local', command: [nodePath, binPath, 'mcp'], enabled: true };
-            const have = mcpServers
-              ? parsed.mcp.servers.contextbase
+            const have = esV2
+              ? (mcpServers ? parsed.mcp.servers.contextbase : undefined)
               : (parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp.contextbase : undefined);
-            if (!configEq(have, want)) {
-              const mcpBase = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : {};
-              const mcpNext = mcpServers
-                ? { ...mcpBase, servers: { ...mcpBase.servers, contextbase: want } }
-                : { ...mcpBase, contextbase: want };
-              out = setJsoncPath(out, ['mcp'], mcpNext);
+            const hasLegacyMcp = esV2 && parsed.mcp && typeof parsed.mcp === 'object' && 'contextbase' in parsed.mcp;
+            if (!configEq(have, want) || hasLegacyMcp) {
+              const mcpBase = parsed.mcp && typeof parsed.mcp === 'object' ? { ...parsed.mcp } : {};
+              if (esV2) {
+                delete mcpBase.contextbase;
+                mcpBase.servers = { ...(mcpBase.servers || {}), contextbase: want };
+              } else {
+                mcpBase.contextbase = want;
+              }
+              out = setJsoncPath(out, ['mcp'], mcpBase);
             }
             return out;
           },
@@ -1510,9 +2110,10 @@ export function autoConfigureGlobal(options = {}) {
     const pluginPath = path.join(kiloGlobalDir, 'plugins', 'contextbase-auto.js');
     if (pluginCode) {
       try {
-        writeAtomic(pluginPath, pluginCode);
-        configured.push(pluginPath);
+        writeIfChanged(pluginPath, pluginCode, configured);
         removeFileIfExists(path.join(kiloGlobalDir, 'plugin', 'contextbase-auto.js'));
+        removeFileIfExists(path.join(homeDir, '.kilo', 'plugin', 'contextbase-auto.js'));
+        removeFileIfExists(path.join(homeDir, '.kilo', 'plugins', 'contextbase-auto.js'));
       } catch (err) {
         failures.push(reportConfigError('CONFIG_WRITE_FAILED', 'autoConfigureGlobal', err.message, { file: pluginPath }));
       }
@@ -1563,6 +2164,41 @@ export function autoConfigureGlobal(options = {}) {
     );
     if (res.written) configured.push(res.file);
   }
+
+  // 3. Kilo Code extension (~/.kilocode/mcp.json)
+  if (fs.existsSync(path.join(homeDir, '.kilocode')) || options.forceGlobal) {
+    mergeMcpServersFile(
+      path.join(homeDir, '.kilocode', 'mcp.json'),
+      {
+        command: nodePath,
+        args: [binPath, 'mcp'],
+        alwaysAllow: [
+          'contextbase_status', 'contextbase_context', 'contextbase_log', 'contextbase_task',
+          'contextbase_audit', 'contextbase_sync', 'contextbase_bootstrap', 'contextbase_guard',
+          'contextbase_snapshot', 'contextbase_restore', 'contextbase_tools', 'contextbase_review',
+          'contextbase_redundancy', 'contextbase_slop', 'contextbase_export', 'contextbase_strands_prepare',
+          'contextbase_init', 'contextbase_hook', 'contextbase_mission', 'contextbase_egm_review',
+          'contextbase_swarm_start', 'contextbase_swarm_status', 'contextbase_swarm_send',
+          'contextbase_swarm_collect', 'contextbase_swarm_stop', 'contextbase_terminals'
+        ]
+      },
+      failures,
+      'autoConfigureGlobal.kilocode',
+      configured
+    );
+  }
+
+  // 4. Claude Code (~/.claude.json y ~/.claude/settings.json)
+  configureClaudeGlobal(homeDir, binPath, nodePath, Boolean(options.forceGlobal), configured, failures);
+
+  // 5. Antigravity / Gemini CLI (~/.gemini/)
+  configureGeminiGlobal(homeDir, binPath, nodePath, Boolean(options.forceGlobal), configured, failures);
+
+  // 6. Hermes (~/.hermes o %LOCALAPPDATA%\hermes)
+  configureHermesGlobal(homeDir, binPath, nodePath, Boolean(options.forceGlobal), configured, failures);
+
+  // 7. Pi Coding Agent (~/.pi/agent/)
+  configurePiGlobal(homeDir, binPath, nodePath, Boolean(options.forceGlobal), configured, failures);
 
   return { files: configured, failures };
 }

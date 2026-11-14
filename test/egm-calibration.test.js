@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { egmReview } from '../src/egm.js';
+import { fileURLToPath } from 'node:url';
+import { egmReview, egmDrift, egmPulse } from '../src/egm.js';
 
 // Calibracion del modelo EGM: eliminar falsos positivos sin volver laxo el modelo.
 // Cada caso fija un limite: lo que deja de bloquear y lo que sigue bloqueando.
@@ -209,4 +210,83 @@ test('sin --target y sin docs/ cae a README.md en vez de FAIL espurio', () => {
   assert.equal(r.target, 'README.md', JSON.stringify(r, null, 2));
   assert.notEqual(r.verdict, 'FAIL');
   drop(dir);
+});
+
+// ---------------------------------------------------------------------------
+// Regresiones EGM post-integracion: "todo" en espanol, backticks y archivo historico
+// ---------------------------------------------------------------------------
+
+test('la palabra "todo" en espanol y los literales `TODO`/`FIXME` entre backticks no disparan marker:todo', () => {
+  const docLimpio = `# Guia operativa de sesiones
+
+## Flujo
+En todo el repositorio la configuracion aplica sobre todos los archivos editados.
+La herramienta extrae marcadores \`TODO\` y \`FIXME\` del codigo fuente sin abrir decisiones aqui.
+`;
+  const docAbierto = `# Especificacion pendiente
+
+## Contexto
+La estructura de salida cubre el caso base.
+TODO: definir el timeout maximo del cliente.
+
+## Alternativas consideradas
+Se evaluo un limite fijo frente a uno configurable.
+
+## Riesgos
+El riesgo es cortar respuestas validas por timeout corto; se mitiga ajustando el umbral.
+
+## Pruebas
+La suite comprueba respuestas rapidas y respuestas agotadas.
+`;
+  const dir = tmp({ ...SRC, 'docs/guia.md': docLimpio, 'docs/spec-abierto.md': docAbierto });
+
+  const limpio = egmReview({ cwd: dir, target: 'docs/guia.md' });
+  const falsosMarkers = limpio.findings.filter(f => f.scope === 'marker:todo' && !f.advisory);
+  assert.deepEqual(falsosMarkers, [], JSON.stringify(limpio.findings, null, 2));
+
+  const abierto = egmReview({ cwd: dir, target: 'docs/spec-abierto.md' });
+  const realMarker = abierto.findings.find(f => f.scope === 'marker:todo' && !f.advisory);
+  assert.ok(realMarker, JSON.stringify(abierto.findings, null, 2));
+  drop(dir);
+});
+
+test('los documentos vivos reales del repositorio (FUNCIONAMIENTO, COMPATIBILIDAD-OPENCODE, fundamentos) pasan EGM sin blockers ni majors', () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  for (const rel of ['docs/FUNCIONAMIENTO.md', 'docs/COMPATIBILIDAD-OPENCODE.md', 'contextbase/fundamentos.md']) {
+    const r = egmReview({ cwd: repoRoot, target: rel });
+    assert.equal(r.verdict, 'PASS', `${rel}: ${JSON.stringify(r.findings, null, 2)}`);
+    assert.equal(r.summary.blocker, 0, `${rel} blockers`);
+    assert.equal(r.summary.major, 0, `${rel} majors`);
+  }
+});
+
+test('egmDrift y egmPulse ignoran archivos historicos en docs/superpowers y pasan sobre el repositorio', () => {
+  const dir = tmp({
+    ...SRC,
+    'docs/COMPATIBILIDAD-GUIA.md': DOC_COMPATIBILIDAD,
+    'docs/superpowers/specs/2026-10-29-swarm-design.md': '# Diseno historico\n\n## Contexto\nVive en `src/inexistente.js` y queda TODO por definir.\n',
+  });
+  const futuro = new Date(Date.now() + 86400000);
+  fs.utimesSync(path.join(dir, 'docs/superpowers/specs/2026-10-29-swarm-design.md'), futuro, futuro);
+
+  const driftTmp = egmDrift({ cwd: dir, docsDir: 'docs' });
+  assert.deepEqual(driftTmp.drift, [], JSON.stringify(driftTmp.drift, null, 2));
+
+  const pulseTmp = egmPulse(dir);
+  assert.equal(pulseTmp.ok, true, JSON.stringify(pulseTmp));
+  assert.equal(pulseTmp.target, 'docs/COMPATIBILIDAD-GUIA.md');
+  assert.equal(pulseTmp.verdict, 'PASS');
+  assert.equal(pulseTmp.drift, 0);
+  drop(dir);
+
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const driftRepo = egmDrift({ cwd: repoRoot });
+  assert.deepEqual(driftRepo.drift, [], JSON.stringify(driftRepo.drift, null, 2));
+
+  const pulseRepo = egmPulse(repoRoot);
+  assert.equal(pulseRepo.ok, true, JSON.stringify(pulseRepo));
+  assert.equal(pulseRepo.verdict, 'PASS');
+  assert.equal(pulseRepo.blockers, 0);
+  assert.equal(pulseRepo.majors, 0);
+  assert.equal(pulseRepo.drift, 0);
 });

@@ -1,8 +1,22 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { cbError, emitCbError, writeAtomic } from './fsutil.js';
 import { resolveInside } from './sandbox.js';
+
+function isHomeDir(dir) {
+  try {
+    const root = path.resolve(dir);
+    const home = path.resolve(os.homedir());
+    if (process.platform === 'win32' ? root.toLowerCase() === home.toLowerCase() : root === home) return true;
+    return process.platform === 'win32'
+      ? fs.realpathSync(root).toLowerCase() === fs.realpathSync(home).toLowerCase()
+      : fs.realpathSync(root) === fs.realpathSync(home);
+  } catch {
+    return false;
+  }
+}
 
 export const GUARDED_FILES = [
   'AGENTS.md',
@@ -112,6 +126,7 @@ function readBaselineFile(cwd) {
 
 export function refreshBaseline(cwd, files) {
   const root = path.resolve(cwd);
+  if (isHomeDir(root)) return false;
   const file = path.join(root, 'contextbase', 'baseline.json');
   const list = Array.isArray(files) && files.length > 0
     ? files
@@ -148,16 +163,18 @@ export function refreshBaseline(cwd, files) {
 }
 
 export function baseline(cwd) {
-  const file = path.join(cwd, 'contextbase', 'baseline.json');
-  let b = readBaselineFile(cwd);
+  const root = path.resolve(cwd);
+  if (isHomeDir(root)) return { files: {}, created: null, skipped: 'home-directory' };
+  const file = path.join(root, 'contextbase', 'baseline.json');
+  let b = readBaselineFile(root);
   if (!b) {
     b = { files: {}, created: new Date().toISOString() };
   }
-  const guarded = loadGuarded(cwd);
-  let changed = !readBaselineFile(cwd);
+  const guarded = loadGuarded(root);
+  let changed = !readBaselineFile(root);
   for (const rel of guarded) {
     if (!(rel in b.files)) {
-      const full = path.join(cwd, rel);
+      const full = path.join(root, rel);
       b.files[rel] = { hash: hashFile(full), mtime: fileMtimeIso(full) };
       changed = true;
     }
@@ -192,6 +209,7 @@ export function scanSuspicious(text) {
 
 export function check(cwd) {
   const root = path.resolve(cwd);
+  if (isHomeDir(root)) return { status: 'ok', drifts: [], baseline: {}, skipped: 'home-directory' };
   const b = baseline(root);
   const guarded = loadGuarded(root);
   const drifts = [];

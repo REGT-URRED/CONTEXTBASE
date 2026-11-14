@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ensureContextBase } from '../src/cli.js';
 import { autoEnsure, silentInit, isHomeDirectory } from '../src/auto.js';
+import { baseline as guardBaseline, check as guardCheck, refreshBaseline as guardRefreshBaseline } from '../src/guard.js';
 
 function tmp(prefix = 'cb-home-guard-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -105,5 +106,27 @@ test('guardia de hogar: un proyecto real sigue creando contextbase/', () => {
     }
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('guardia de hogar: baseline, check y refreshBaseline nunca escriben en $HOME', () => {
+  const home = tmp('cb-home-guard-drift-');
+  try {
+    withHome(home, () => {
+      const b = guardBaseline(home);
+      assert.equal(b.skipped, 'home-directory');
+      assert.deepEqual(b.files, {});
+
+      const c = guardCheck(home);
+      assert.equal(c.status, 'ok');
+      assert.equal(c.skipped, 'home-directory');
+      assert.deepEqual(c.drifts, []);
+
+      const r = guardRefreshBaseline(home);
+      assert.equal(r, false);
+      assertNothingScaffolded(home);
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });

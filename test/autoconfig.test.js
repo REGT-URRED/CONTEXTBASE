@@ -11,7 +11,8 @@ import {
   configureOpenCode,
   configureCursorAndIde,
   ensureGitExclude,
-  buildOpenCodePluginSource
+  buildOpenCodePluginSource,
+  hasStaleAgentConfig
 } from '../src/autoconfig.js';
 
 function tmp(prefix = 'cb-ac-') {
@@ -143,4 +144,86 @@ test('sin plugin global: escribe la copia local y la reporta', () => {
   assert.ok(res.files.includes('.opencode/plugins/contextbase-auto.js'));
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('hasStaleAgentConfig: acepta OpenCode v2 mcp.servers.contextbase con plugin global apuntando a otro bin valido', () => {
+  const dir = tmp('cb-ac-v2-proj-');
+  const home = tmp('cb-ac-v2-home-');
+  const altBinDir = tmp('cb-ac-bin-');
+  try {
+    const altBin = path.join(altBinDir, 'contextbase.js');
+    fs.writeFileSync(altBin, '#!/usr/bin/env node\n', 'utf8');
+
+    const globalPlugin = path.join(home, '.config', 'opencode', 'plugins', 'contextbase-auto.js');
+    fs.mkdirSync(path.dirname(globalPlugin), { recursive: true });
+    fs.writeFileSync(globalPlugin, buildOpenCodePluginSource(altBin, process.execPath), 'utf8');
+
+    fs.writeFileSync(
+      path.join(dir, 'opencode.json'),
+      JSON.stringify({
+        permissions: [{ action: 'contextbase_*', resource: '*', effect: 'allow' }],
+        mcp: { servers: { contextbase: { type: 'local', command: [process.execPath, altBin, 'mcp'], enabled: true } } }
+      }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(dir, 'kilo.json'),
+      JSON.stringify({ mcp: { contextbase: { type: 'local', command: [process.execPath, altBin, 'mcp'], enabled: true } } }, null, 2)
+    );
+
+    assert.equal(hasStaleAgentConfig(dir, { homeDir: home }), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(altBinDir, { recursive: true, force: true });
+  }
+});
+
+test('autoConfigureGlobal: configura Pi, Antigravity/Gemini, Claude y Hermes en home aislado', () => {
+  const home = tmp('cb-ac-global-multi-');
+  const binDir = tmp('cb-ac-global-bin-');
+  try {
+    const fakeBin = path.join(binDir, 'contextbase.js');
+    fs.writeFileSync(fakeBin, '#!/usr/bin/env node\n', 'utf8');
+
+    const piDupSkill = path.join(home, '.pi', 'agent', 'skills', 'contextbase', 'SKILL.md');
+    fs.mkdirSync(path.dirname(piDupSkill), { recursive: true });
+    fs.writeFileSync(piDupSkill, '# duplicado', 'utf8');
+
+    const hermesCfg = path.join(home, '.hermes', 'config.yaml');
+    fs.mkdirSync(path.dirname(hermesCfg), { recursive: true });
+    fs.writeFileSync(hermesCfg, 'plugins:\n  enabled: [existing]\n', 'utf8');
+
+    const res = autoConfigureGlobal({
+      homeDir: home,
+      forceGlobal: true,
+      binPath: fakeBin,
+      nodePath: process.execPath,
+    });
+    assert.deepEqual(res.failures, []);
+
+    const expectedBin = fakeBin.replace(/\\/g, '/');
+    const piMcp = JSON.parse(fs.readFileSync(path.join(home, '.pi', 'agent', 'mcp.json'), 'utf8'));
+    assert.deepEqual(piMcp.mcpServers.contextbase.args, [expectedBin, 'mcp']);
+    const piExt = fs.readFileSync(path.join(home, '.pi', 'agent', 'extensions', 'contextbase-auto.js'), 'utf8');
+    assert.ok(piExt.includes(expectedBin));
+    assert.equal(fs.existsSync(path.dirname(piDupSkill)), false, 'debe limpiar skills duplicadas de Pi');
+
+    const antigravityHooks = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'));
+    assert.ok(antigravityHooks.contextbase.SessionStart[0].command.includes('hook-run session-start --antigravity'));
+    assert.ok(antigravityHooks.contextbase.PostToolUse[0].hooks[0].command.includes('hook-run post-tool'));
+    assert.ok(antigravityHooks.contextbase.Stop[0].command.includes('hook-run session-stop'));
+
+    const claudeMcp = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+    assert.deepEqual(claudeMcp.mcpServers.contextbase.args, [expectedBin, 'mcp']);
+    const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.ok(claudeSettings.permissions.allow.includes('mcp__contextbase__*'));
+
+    assert.equal(fs.existsSync(path.join(home, '.hermes', 'plugins', 'contextbase', '__init__.py')), true);
+    const updatedYaml = fs.readFileSync(hermesCfg, 'utf8');
+    assert.ok(updatedYaml.includes('enabled: [existing, contextbase]'));
+    assert.ok(updatedYaml.includes('mcp_servers:'));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
 });

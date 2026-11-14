@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeAtomic } from './fsutil.js';
 import { CONTEXTBASE_RULE_BLOCK } from './rules.js';
+import { getGlobalPreferredBinPath } from './autoconfig.js';
 
 export const PHILOSOPHY = 'No es la IA, es quien controla a la IA';
 const CUSTOM_AGENTS_FILE = 'contextbase/agents.json';
@@ -447,7 +448,7 @@ function mergeAiderConfig(file) {
  */
 export function configureUniversalBridges(projectDir = process.cwd(), options = {}) {
   const root = path.resolve(projectDir);
-  const binPath = (options.binPath || path.resolve(root, 'bin', 'contextbase.js')).replace(/\\/g, '/');
+  const binPath = getGlobalPreferredBinPath(options);
   const nodePath = (options.nodePath || process.execPath).replace(/\\/g, '/');
   const written = [];
   const failures = [];
